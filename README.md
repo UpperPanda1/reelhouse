@@ -148,11 +148,11 @@ Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a
 
 **Windows, no install (`raftv-gateway.exe`).** Download `raftv-gateway.exe` from the repository's *Releases* page (built by GitHub from this code: `.github/workflows/gateway-exe.yml`; push a tag such as `gateway-v1.0.0`, or run the workflow by hand and take the file from the run's *Artifacts*). Put it in its own folder and double-click it:
 
-1. Windows may say "Windows protected your PC" (the program is not code-signed): *More info*, *Run anyway*. When the firewall asks, allow it on **Private networks**.
-2. The window shows what to enter in RafTV, *Settings*, *Connection*: an **Address** (`http://192.168.x.x:8787`, for your phone) and a **Token**. On the same PC you can use `http://127.0.0.1:8787`.
+1. Windows may say "Windows protected your PC" (the program is not code-signed): *More info*, *Run anyway*.
+2. The window shows what to enter in RafTV (in a browser on **the same PC**), *Settings*, *Connection*: the **Address** `http://127.0.0.1:8787` and a **Token**. It listens on this PC only; other devices on your network cannot reach it.
 3. Keep the window open while you watch; close it to stop.
 
-**It writes nothing to disk** (measured with `strace` on the Linux build: no file created, opened for writing, renamed or deleted, also while streaming video); it runs from its own file in memory. The token is not stored: it is derived on every start from this PC's Windows machine id (`MachineGuid`, only read) and your user name, so it stays the same and your phone keeps working after a restart. Defaults: reachable from your Wi-Fi (`0.0.0.0`), port 8787, only `https://raftv.pages.dev` allowed. To change them, you may create `raftv-gateway.json` next to the program, for example `{"token": "your-own-token", "port": 8787, "allowedOrigins": ["https://raftv.pages.dev"]}` (also `host`, `allowPrivate`, `tlsKey`, `tlsCert`); it is only read, never written. The environment variables below override both. Windows itself may still keep its usual traces of any program you start (e.g. its Prefetch entry, the firewall rule you allow); the gateway adds none. Build it yourself with `npm run build:gateway` (Windows: run it on Windows; it makes a program for the system it runs on). Measured (Linux build of the same program): starts in about 0.04 s, about 60 MB of memory idle (mostly the Node runtime inside it), about 100 MB while streaming at full local speed, negligible CPU.
+**It writes nothing to disk** (measured with `strace` on the Linux build: no file created, opened for writing, renamed or deleted, also while streaming video); it runs from its own file in memory. The token is not stored: it is derived on every start from this PC's Windows machine id (`MachineGuid`, only read) and your user name, so it stays the same after a restart (the token stops other websites open in your browser from using the gateway). Defaults: this PC only (`127.0.0.1`), port 8787, only `https://raftv.pages.dev` allowed. To change them, you may create `raftv-gateway.json` next to the program, for example `{"token": "your-own-token", "port": 8787, "allowedOrigins": ["https://raftv.pages.dev"]}` (also `host`, `allowPrivate`, `tlsKey`, `tlsCert`); it is only read, never written. The environment variables below override both. Windows itself may still keep its usual traces of any program you start (e.g. its Prefetch entry); the gateway adds none. Build it yourself with `npm run build:gateway` (Windows: run it on Windows; it makes a program for the system it runs on). Measured (Linux build of the same program): starts in about 0.04 s, about 60 MB of memory idle (mostly the Node runtime inside it), about 100 MB while streaming at full local speed, negligible CPU.
 
 **What goes through the gateway** (nothing else does: the site itself, TMDB, subtitles and accounts never):
 
@@ -162,8 +162,6 @@ Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a
 | Hexion | lookups; video comes straight from the file host |
 | Fendrix | nothing, except its video in browsers without built-in HLS (Firefox) |
 | Mavonyx | only the request that lists the real files (it needs a Referer a browser cannot send, and MovieBox refuses Cloudflare); token, search and video go direct |
-
-**From a phone (https site, gateway on your PC over plain http):** Chrome on Android 142+ asks once to allow access to devices on your local network for a private address like `192.168.x.x`; allow it. Other browsers may refuse an `http` gateway from an `https` page. Not verified end to end here (see `VERIFICATION.md`, section 14).
 
 **With Node instead:**
 

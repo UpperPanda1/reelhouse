@@ -106,13 +106,17 @@ test('packaged gateway: everything the site uses works through it (health, token
   } finally { g.child.kill(); up.srv.close(); }
 });
 
-test('packaged gateway: default start listens on the local network and prints the phone address and this PC\'s address', async () => {
+test('packaged gateway: default start listens only on this PC (127.0.0.1); the network cannot reach it', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rgw-'));
   const g = await start(dir, { PORT: '0' });
   try {
-    assert.match(g.out, /\(on this PC itself: http:\/\/127\.0\.0\.1:\d+\)/);
-    assert.equal((await fetch(g.local + '/health')).status, 200);
+    assert.match(g.base, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.doesNotMatch(g.out, /192\.168|on this PC itself/);
+    assert.equal((await fetch(g.base + '/health')).status, 200);
     assert.match(g.out, /Allowed site\(s\): https:\/\/raftv\.pages\.dev/);
+    // the same port on this machine's network address refuses the connection
+    const lan = Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal);
+    if (lan) await assert.rejects(fetch(`http://${lan.address}:${new URL(g.base).port}/health`), 'not reachable from the network');
   } finally { g.child.kill(); }
 });
 

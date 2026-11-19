@@ -1,7 +1,7 @@
 // Entry point of the packaged gateway (raftv-gateway.exe, see scripts/build-gateway-exe.mjs). It only chooses settings
 // and starts the unchanged gateway (./bdix-gateway.mjs); every request is handled there.
-// Defaults for a double-click on a home PC used from a phone: reachable on the local network, a token derived from this
-// PC (same on every start, nothing stored), only the RafTV site allowed by CORS. It writes NOTHING to disk: an optional
+// Defaults for a double-click: reachable only from this PC (127.0.0.1; owner: no phone/network access), a token derived
+// from this PC (same on every start, nothing stored), only the RafTV site allowed by CORS. It writes NOTHING to disk: an optional
 // raftv-gateway.json next to the program is read if the user created one, never written. Environment variables
 // (HOST, PORT, GATEWAY_TOKEN, ALLOWED_ORIGINS, ALLOW_PRIVATE, TLS_KEY, TLS_CERT) override the file.
 import fs from 'node:fs';
@@ -59,7 +59,7 @@ export function settings(dir, env = process.env) {
     file: saved ? file : null,
     stable: !derived || derived.stable,
     env: {
-      HOST: env.HOST || String(s.host || '0.0.0.0'),
+      HOST: env.HOST || String(s.host || '127.0.0.1'),
       PORT: env.PORT || String(s.port || 8787),
       GATEWAY_TOKEN: env.GATEWAY_TOKEN || fileToken || derived.token,
       ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || list(s.allowedOrigins) || DEFAULT_SITE,
@@ -71,7 +71,6 @@ export function settings(dir, env = process.env) {
   };
 }
 
-const lanAddresses = () => Object.values(os.networkInterfaces()).flat().filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address);
 
 function fail(message) {
   console.error(`\n${message}\n`);
@@ -89,12 +88,9 @@ export function main() {
   server.listen(cfg.port, cfg.host, () => {
     const port = server.address().port;
     const scheme = cfg.tls ? 'https' : 'http';
-    const anyHost = cfg.host === '0.0.0.0' || cfg.host === '::';
-    const where = anyHost ? lanAddresses() : [cfg.host];
     console.log('RafTV gateway is running. Keep this window open while you watch.\n');
     console.log('In RafTV: Settings > Connection, enter:');
-    for (const ip of where) console.log(`  Address  ${scheme}://${ip}:${port}`);
-    if (anyHost) console.log(`  (on this PC itself: ${scheme}://127.0.0.1:${port})`);
+    console.log(`  Address  ${scheme}://${cfg.host}:${port}`);
     console.log(`  Token    ${cfg.token || '(none)'}`);
     console.log(`\nAllowed site(s): ${cfg.origins.join(', ') || 'any'}`);
     if (!stable) console.log('Note: this token changes on every start (no PC id found); put a "token" in raftv-gateway.json to keep one.');
