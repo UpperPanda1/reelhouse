@@ -66,6 +66,12 @@ function mockMavonyxApi(page, { mp4Url, expose = true }) {
   const MB = /^(apig\.inmoviebox\.com|api3\.aoneroom\.com|h5-api\.aoneroom\.com)$/;
   const prev = page.__intercept;
   page.__intercept = (r, u) => {
+    // this site's Function route: in the real deployment it asks the web API with the movie-page Referer (lib/mavonyx.js,
+    // unit-tested); here it answers with the local test file, as the live web API answers the Function
+    if (u.pathname === '/api/mavonyx/play') {
+      seen.push(`SITE play ${u.searchParams.get('subjectId')} ${u.searchParams.get('detailPath')}`);
+      return r.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({ streams: [{ id: 'w1', url: mp4Url, format: 'MP4', resolutions: '1080' }], hasResource: true }) }), true;
+    }
     if (!MB.test(u.hostname)) return prev ? prev(r, u) : false;
     const origin = r.headers().origin || '*';
     // live (19 Nov 2026): apig (CloudFront) sends only `allow-origin: *`, so its x-user header is hidden from pages;
@@ -94,10 +100,12 @@ function mockMavonyxApi(page, { mp4Url, expose = true }) {
     if (u.pathname.endsWith('/subject-api/get')) return json(200, { code: 0, data: { detailPath: 'the-matrix-x1', dubs: [] } }), true;
     if (u.pathname.endsWith('/play-info')) {
       const cookie = `Edge-Cache-Cookie=urlprefix=${Buffer.from('https://cdn.moviebox.test/dash/603/').toString('base64').replace(/\//g, '_').replace(/\+/g, '-')}:Expires=1:KeyName=k:Signature=s`;
-      return json(200, { code: 0, data: { streams: [{ id: 'd1', format: 'DASH', url: 'https://cdn.moviebox.test/raw', resolutions: '2160', signCookie: cookie }] } }), true;
+      // like the owner's live trace: a placeholder announcement MP4 (never offered) next to a DASH stream
+      return json(200, { code: 0, data: { streams: [{ id: 'd1', format: 'DASH', url: 'https://cdn.moviebox.test/raw', resolutions: '2160', signCookie: cookie }, { id: 'ph', format: 'MP4', url: 'https://macdn.aoneroom.com/other/2026/10/10/80da52722ee7de7a4303290af6783424.mp4', resolutions: '1080,720,480' }] } }), true;
     }
     if (u.pathname.endsWith('/captions') || u.pathname.endsWith('-captions')) return json(200, { code: 0, data: { extCaptions: [] } }), true;
-    if (u.pathname === '/wefeed-h5api-bff/subject/play') return json(200, { code: 0, data: { streams: h.authorization && u.searchParams.get('subjectId') === '603' ? [{ id: 'w1', url: mp4Url, resolutions: '1080' }] : [] } }, webTok), true;
+    // live (19 Nov 2026): without the movie-page Referer (which a page cannot send) the web API has no streams
+    if (u.pathname === '/wefeed-h5api-bff/subject/play') return json(200, { code: 0, data: { streams: [], hasResource: false, playConfig: { maxResolution: 480 } } }, webTok), true;
     return json(404, {}), true;
   };
   return seen;
@@ -308,7 +316,8 @@ export async function steps4(ctx) {
       assert.ok(seen.includes('POST /wefeed-mobile-bff/subject-api/search/v2 signed auth ua:browser'), 'search signed and authorised');
       // Chromium really hid apig's x-user (no expose-headers there), so the page took the web API's token
       assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play no-auth'), 'anonymous web token fetched: ' + seen.join(' | '));
-      assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play auth'), 'web API called with the token');
+      assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play auth'), 'web API called directly first (finds nothing, as live)');
+      assert.ok(seen.includes('SITE play 603 the-matrix-x1'), 'then this site\u2019s /api/mavonyx/play, which can send the Referer');
       assert.ok(seen.includes('OPTIONS api3.aoneroom.com') && seen.includes('OPTIONS apig.inmoviebox.com'), 'CORS preflights were made, and answered here (not by the internet)');
       assert.ok(!seen.some((x) => x.startsWith('GATEWAY')), 'never routed through the gateway');
       assert.ok(!bdix.log.some((r) => r.method === 'POST' || r.path.startsWith('/api/')), 'no BDIX lookups (only the media file)');

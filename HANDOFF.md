@@ -4,7 +4,7 @@
 
 ## Status
 
-* Built and tested: 153 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
+* Built and tested: 159 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
 * **Connection and playback fixes (Nov 19, 2026)**, from the owner's report "Fendrix: 1 found but never plays; Hexion and BDIX unreachable" and live checks against the deployment (`VERIFICATION.md` section 18):
   * *Endless spinner*: the player's watchdog was armed only after the first `canplay`, and hls.js failures were never reported. Without built-in HLS (Firefox, older Chrome) Fendrix's CDN refuses hls.js (it 404s any foreign `Origin`), so the page spun forever. Now the player gives up in about a second and explains (built-in HLS, gateway or external player).
   * *FlixHub is a BDIX server* (original: "FlixHub FTP: BDIX"); it was wrongly sent through the Cloudflare edge proxy (504). Now it is treated like DhakaFlix and Circle FTP.
@@ -54,7 +54,7 @@ Outside npm: **Node 22+**; **ffmpeg** with libx264/libx265/vpx/aac/ac3/opus for 
 
 ```bash
 npm ci                    # installs everything incl. Chromium and workerd binaries (no other downloads needed)
-npm test                  # 153 tests, ~3 s
+npm test                  # 159 tests, ~3 s
 npm run e2e:media         # once; writes e2e/media/ (git-ignored)
 npm run e2e               # ~4 min; add a word to run matching steps only
 npm run smoke:cf          # ~20 s
@@ -89,7 +89,7 @@ READ FIRST, in this order, before changing anything:
 my task  4. VERIFICATION.md (before touching tests).
 
 SETUP: Node 22+, run `npm ci`, then `npm test` and confirm the baseline before
-you change code (153 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
+you change code (159 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
 (38 steps).
 
 TASK: <one or two sentences: what I want, and why>

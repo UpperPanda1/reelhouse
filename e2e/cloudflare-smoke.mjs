@@ -83,6 +83,8 @@ try {
     assert.equal((await get('/api/nope')).status, 404);
     assert.equal((await get('/api/search')).status, 400);
     assert.equal((await get('/api/home', { method: 'POST' })).status, 405);
+    // Mavonyx web-stream route: validated inside workerd before any upstream request (valid calls are not made here)
+    for (const q of ['', 'subjectId=x&se=0&ep=0&detailPath=a', 'subjectId=1&se=0&ep=0&detailPath=..%2Fx', 'subjectId=1&se=0&ep=0&detailPath=a%40evil.com']) assert.equal((await get('/api/mavonyx/play?' + q)).status, 400, q);
   });
   await t('edge proxy only allows https + allowlisted hosts (no ports, no userinfo, no lookalikes)', async () => {
     for (const u of ['https://example.com/', 'https://flixhub.net/', 'http://4khdhub.one/', 'https://4khdhub.one:8443/', 'https://4khdhub.one@evil.com/', 'https://4khdhub.one.evil.com/']) {

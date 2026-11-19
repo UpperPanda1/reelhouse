@@ -171,7 +171,9 @@ async function runReference(f, args, settings) {
   return JSON.parse(JSON.stringify(out)).map((s) => ({ ...s, name: s.name.replace(/[​﻿]/g, ''), title: s.title.replace(/[​﻿]/g, '') }));
 }
 const direct = (f) => createNet(() => ({ edge: false }), f);
-const signedOrApi = (calls) => calls.filter((c) => !c.url.includes('themoviedb')).map((c) => `${c.method} ${c.url} ${c.body || ''}`).sort();
+// excluded: TMDB (the port has the details already) and this site's /api/mavonyx/play (asked only when the direct web calls
+// found nothing: a documented deviation, tested on its own)
+const signedOrApi = (calls) => calls.filter((c) => !c.url.includes('themoviedb') && !c.url.startsWith('/api/mavonyx/')).map((c) => `${c.method} ${c.url} ${c.body || ''}`).sort();
 const FORBIDDEN = ['user-agent', 'referer', 'origin', 'cookie'];
 
 async function both(kind, opts) {
@@ -407,4 +409,95 @@ test('mavonyx deviation: a track whose only stream is the app API\'s MP4 keeps i
   assert.deepEqual(await mx.lookup({ ...META.tv, episode: 5 }, makeCtx(direct(upstream()), mx)), []);
   // the original returns nothing for episode 4 (it drops every app-API MP4)
   assert.deepEqual(await runReference(upstream(), ['1396', 'tv', 1, 4]), []);
+});
+
+// ------------------------------------------------ /api/mavonyx/play (Cloudflare Function) ----
+import { handleApi } from '../lib/api.js';
+const PLAY_Q = 'subjectId=6391474290696802080&se=0&ep=0&detailPath=inception-e1BOR6f19C7';
+function webUpstream(reply = null) {
+  const calls = [];
+  const f = async (url, init = {}) => {
+    calls.push({ url: String(url), headers: Object.fromEntries(new Headers(init.headers || {})) });
+    if (reply) return reply(String(url), init);
+    const ref = new Headers(init.headers || {}).get('referer') || '';
+    // live rule (19 Nov 2026): streams only with a Referer on a MovieBox host naming the movie's page
+    const ok = /^https:\/\/(movie-box\.co|themoviebox\.xyz|h5-api\.aoneroom\.com)\/movies\/inception-e1BOR6f19C7\b/.test(ref);
+    const streams = ok ? [{ format: 'MP4', id: '1509', url: 'https://bcdnxw.hakunaymatata.com/tran-audio/20250609/1342.mp4?sign=s&t=1', resolutions: '1080', size: '1', duration: 9, codecName: 'h264', extra: 'x' }] : [];
+    return new Response(JSON.stringify({ code: 0, message: 'ok', data: { streams, hasResource: ok, limited: false, playConfig: { maxResolution: 480 } } }), { headers: { 'content-type': 'application/json' } });
+  };
+  f.calls = calls;
+  return f;
+}
+const getApi = (q, f) => handleApi(new Request('https://raftv.pages.dev/api/mavonyx/play?' + q), {}, { fetch: f });
+
+test('/api/mavonyx/play: asks only the web API, with the movie-page Referer a browser cannot send; returns trimmed streams', async () => {
+  const f = webUpstream();
+  const res = await getApi(PLAY_Q, f);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'no-store'); // signed, expiring URLs
+  const body = await res.json();
+  assert.deepEqual(body, { streams: [{ id: '1509', url: 'https://bcdnxw.hakunaymatata.com/tran-audio/20250609/1342.mp4?sign=s&t=1', format: 'MP4', resolutions: '1080', codecName: 'h264' }], hasResource: true });
+  assert.equal(f.calls.length, 1);
+  const u = new URL(f.calls[0].url);
+  assert.equal(u.origin + u.pathname, 'https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/play');
+  assert.deepEqual([...u.searchParams.keys()].slice(0, 4), ['subjectId', 'se', 'ep', 'detailPath']);
+  assert.equal(f.calls[0].headers.referer, 'https://movie-box.co/movies/inception-e1BOR6f19C7?id=6391474290696802080&type=/movie/detail&detailSe=&detailEp=&lang=en');
+});
+
+test('/api/mavonyx/play: hostile or malformed parameters are refused before any upstream request', async () => {
+  const f = webUpstream();
+  for (const q of ['', 'subjectId=abc&se=0&ep=0&detailPath=x', 'subjectId=1&se=0&ep=0', 'subjectId=1&se=-1&ep=0&detailPath=x', 'subjectId=1&se=0&ep=99999&detailPath=x',
+    'subjectId=1&se=0&ep=0&detailPath=../../admin', 'subjectId=1&se=0&ep=0&detailPath=x%2F..%2Fy', 'subjectId=1&se=0&ep=0&detailPath=x@evil.com', 'subjectId=1&se=0&ep=0&detailPath=x%3Fa%3D1',
+    'subjectId=1&se=0&ep=0&detailPath=' + 'a'.repeat(200), 'subjectId=' + '9'.repeat(25) + '&se=0&ep=0&detailPath=x', 'subjectId=1%26x%3Dy&se=0&ep=0&detailPath=x']) {
+    const res = await getApi(q, f);
+    assert.equal(res.status, 400, q);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+test('/api/mavonyx/play: only https stream URLs pass; upstream errors map to 502/504', async () => {
+  const bad = webUpstream(() => new Response(JSON.stringify({ code: 0, data: { streams: [{ url: 'javascript:alert(1)' }, { url: 'http://x.test/a.mp4' }, { url: 'https://ok.test/a.mp4', resolutions: 720 }], hasResource: true } })));
+  assert.deepEqual((await (await getApi(PLAY_Q, bad)).json()).streams.map((s) => s.url), ['https://ok.test/a.mp4']);
+  assert.equal((await getApi(PLAY_Q, webUpstream(() => new Response('oops', { status: 500 })))).status, 502);
+  assert.equal((await getApi(PLAY_Q, webUpstream(() => new Response('not json')))).status, 502);
+  assert.equal((await getApi(PLAY_Q, webUpstream(() => { throw new TypeError('down'); }))).status, 504);
+});
+
+test('mavonyx deviation: when the browser\'s own web-API calls return nothing, the site\'s /api/mavonyx/play is asked (parity kept otherwise)', async () => {
+  // live shape: direct web calls give a page nothing; the app API offers only the placeholder announcement video
+  const PH = 'https://macdn.aoneroom.com/other/2026/10/10/80da52722ee7de7a4303290af6783424.mp4';
+  const base = upstream();
+  const f = async (url, init = {}) => {
+    const u = String(url);
+    if (u.startsWith('/api/mavonyx/play?')) {
+      const q = new URLSearchParams(u.split('?')[1]);
+      return new Response(JSON.stringify({ streams: q.get('subjectId') === '301' ? [{ id: 'e', url: 'https://bcdnxw.hakunaymatata.com/resource/h265/ep4.mp4?sign=s&t=1', format: 'MP4', resolutions: '1080' }] : [], hasResource: true }), { headers: { 'content-type': 'application/json' } });
+    }
+    if (u.includes('/subject-api/play-info') && u.includes('ep=4')) return new Response(JSON.stringify({ code: 0, data: { streams: [{ id: 'ph', format: 'MP4', url: PH, resolutions: '1080,720,480' }] } }), { headers: { 'content-type': 'application/json' } });
+    return base(url, init);
+  };
+  const ep4 = await mx.lookup({ ...META.tv, episode: 4 }, makeCtx(direct(f), mx));
+  assert.deepEqual(ep4.map((c) => [c.url, c.resolution, c.format]), [['https://bcdnxw.hakunaymatata.com/resource/h265/ep4.mp4?sign=s&t=1', '1080p', 'MP4']]);
+  assert.equal(ep4[0].headers.Referer, 'https://site.test/movies/breaking-bad-q1?id=301&type=/movie/detail&detailSe=&detailEp=&lang=en');
+});
+
+test('mavonyx deviation: placeholder announcement videos (macdn /other/YYYY/MM/DD/) are never offered, whatever the date', async () => {
+  const PH = 'https://macdn.aoneroom.com/other/2026/10/10/80da52722ee7de7a4303290af6783424.mp4';
+  const base = upstream();
+  const f = async (url, init = {}) => (String(url).includes('/subject-api/play-info') && String(url).includes('ep=4')
+    ? new Response(JSON.stringify({ code: 0, data: { streams: [{ id: 'ph', format: 'MP4', url: PH, resolutions: '1080,720,480' }] } }), { headers: { 'content-type': 'application/json' } })
+    : base(url, init));
+  assert.deepEqual(await mx.lookup({ ...META.tv, episode: 4 }, makeCtx(direct(f), mx)), []);
+});
+
+test('mavonyx: the web API\'s codecName decides the codec (an H.264 file under /h265/ stays playable; HEVC is flagged)', async () => {
+  const base = upstream();
+  const mk = (codecName, path) => async (url, init = {}) => (String(url).startsWith('/api/mavonyx/play?')
+    ? new Response(JSON.stringify({ streams: [{ id: 'e', url: `https://bcdnxw.hakunaymatata.com/resource/${path}/ep4.mp4?sign=s&t=1`, format: 'MP4', resolutions: '1080', codecName }] }), { headers: { 'content-type': 'application/json' } })
+    : base(url, init));
+  const caps = { mkv: true, hevc: false, nativeHls: true };
+  const [hevc] = await mx.search({ ...META.tv, episode: 4 }, makeCtx(direct(mk('hevc', 'x')), mx));
+  assert.equal(hevc.info.video, 'hevc'); assert.equal(playability(hevc, caps).level, 'bad');
+  const [avc] = await mx.search({ ...META.tv, episode: 4 }, makeCtx(direct(mk('h264', 'h265')), mx));
+  assert.equal(avc.info.video, 'avc'); assert.equal(playability(avc, caps).level, 'ok');
 });
