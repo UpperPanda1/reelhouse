@@ -296,15 +296,27 @@ export async function steps4(ctx) {
     } finally { app.sources.hexion = false; await page.close(); }
   });
 
-  await step('mavonyx: signed MovieBox lookup straight from the browser (preflights; apig hides its token header, the web token is used), MP4 plays, DASH ranked unplayable, Test connection row', async () => {
+  await step('mavonyx: signed MovieBox lookup straight from the browser (preflights; apig hides its token header, the web token is used), real file listed through the gateway with the movie-page Referer, MP4 plays, placeholder dropped, DASH ranked unplayable, Test connection row', async () => {
     const page = await b.newPage({ width: 1280, height: 800, label: 'mavonyx' });
     const seen = mockMavonyxApi(page, { mp4Url: bdix.base + '/media/test.mp4' });
     const prev = page.__intercept;
-    page.__intercept = (r, u) => (u.hostname === '127.0.0.1' && u.port === '8787' ? (seen.push('GATEWAY ' + u.pathname), r.abort(), true) : prev(r, u));
+    // the configured gateway: its /p envelope is answered here like the real gateway answers it (live-checked: the web API
+    // lists the file only when the envelope carries the movie-page Referer); anything else sent to it is cut off
+    page.__intercept = (r, u) => {
+      if (!(u.hostname === '127.0.0.1' && u.port === '8787')) return prev(r, u);
+      let env = null;
+      try { env = r.method() === 'POST' && u.pathname === '/p' ? JSON.parse(r.postData()) : null; } catch { env = null; }
+      if (env && /^https:\/\/h5-api\.aoneroom\.com\/wefeed-h5api-bff\/subject\/play\?/.test(env.url)) {
+        const ok = /^https:\/\/movie-box\.co\/movies\/the-matrix-x1\?id=603&/.test((env.headers && env.headers.Referer) || '');
+        seen.push(`GATEWAY h5 play ${ok ? 'referer-ok' : 'referer-missing'} ${r.headers()['content-type']}`);
+        return r.respond({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': r.headers().origin || '*' }, body: JSON.stringify({ code: 0, data: { streams: ok ? [{ id: 'w1', url: bdix.base + '/media/test.mp4', format: 'MP4', resolutions: '1080', codecName: 'h264' }] : [], hasResource: ok } }) }), true;
+      }
+      seen.push('GATEWAY other ' + u.pathname); r.abort(); return true;
+    };
     try {
       await open(page, '#/movie/603');
       await waitFor(() => page.$('.dinfo h1'), { what: 'details' });
-      // a gateway is configured, yet Mavonyx must not use it (the API sends CORS headers and is region-gated by IP)
+      // a gateway is configured: Mavonyx sends only the web-API stream call through it (the movie-page Referer); the rest stays direct
       await page.evaluate((st) => localStorage.setItem('rh:settings', st), JSON.stringify({ ...JSON.parse(ONLY('mavonyx')), gatewayUrl: 'http://127.0.0.1:8787' }));
       bdix.log.length = 0;
       await page.evaluate(() => { location.hash = '#/watch/movie/603'; });
@@ -317,9 +329,10 @@ export async function steps4(ctx) {
       // Chromium really hid apig's x-user (no expose-headers there), so the page took the web API's token
       assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play no-auth'), 'anonymous web token fetched: ' + seen.join(' | '));
       assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play auth'), 'web API called directly first (finds nothing, as live)');
-      assert.ok(seen.includes('SITE play 603 the-matrix-x1'), 'then this site\u2019s /api/mavonyx/play, which can send the Referer');
+      assert.ok(seen.includes('GATEWAY h5 play referer-ok text/plain'), 'then the same call through the gateway, with the movie-page Referer: ' + seen.join(' | '));
+      assert.ok(!seen.some((x) => x.startsWith('SITE play')), 'the site Function (429 from Cloudflare) is not needed when the gateway answers');
       assert.ok(seen.includes('OPTIONS api3.aoneroom.com') && seen.includes('OPTIONS apig.inmoviebox.com'), 'CORS preflights were made, and answered here (not by the internet)');
-      assert.ok(!seen.some((x) => x.startsWith('GATEWAY')), 'never routed through the gateway');
+      assert.ok(!seen.some((x) => x.startsWith('GATEWAY other')), 'only that call went through the gateway (token, search, details, captions direct)');
       assert.ok(!bdix.log.some((r) => r.method === 'POST' || r.path.startsWith('/api/')), 'no BDIX lookups (only the media file)');
       await page.evaluate(() => [...document.querySelectorAll('button')].find((x) => /Sources/.test(x.textContent)).click());
       await waitFor(() => page.$('dialog.sheet[open] .ticket'), { what: 'tickets' });

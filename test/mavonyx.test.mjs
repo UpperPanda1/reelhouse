@@ -501,3 +501,59 @@ test('mavonyx: the web API\'s codecName decides the codec (an H.264 file under /
   const [avc] = await mx.search({ ...META.tv, episode: 4 }, makeCtx(direct(mk('h264', 'h265')), mx));
   assert.equal(avc.info.video, 'avc'); assert.equal(playability(avc, caps).level, 'ok');
 });
+
+// ------------------------------------------------ web API through the user's gateway ----
+function webEmptyUpstream({ gw = 'http://127.0.0.1:8090', fnStatus = 502, gwStreams = true } = {}) {
+  const base = upstream();
+  const calls = [];
+  const f = async (url, init = {}) => {
+    const u = String(url);
+    if (u.startsWith(gw + '/p')) {
+      const env = JSON.parse(init.body);
+      calls.push({ kind: 'gateway', u, env, ct: new Headers(init.headers || {}).get('content-type') });
+      const ref = env.headers.Referer || env.headers.referer || '';
+      const ok = gwStreams && /^https:\/\/movie-box\.co\/movies\/breaking-bad-q1\?id=301/.test(ref);
+      return new Response(JSON.stringify({ code: 0, data: { streams: ok ? [{ id: 'g', url: 'https://bcdnxw.hakunaymatata.com/resource/gw.mp4?sign=s&t=1', format: 'MP4', resolutions: '1080', codecName: 'h264' }] : [], hasResource: ok } }), { headers: { 'content-type': 'application/json' } });
+    }
+    if (u.startsWith('/api/mavonyx/play?')) { calls.push({ kind: 'site', u }); return new Response(JSON.stringify({ error: 'upstream_error', message: 'MovieBox answered 429.' }), { status: fnStatus, headers: { 'content-type': 'application/json' } }); }
+    if (u.includes('/subject-api/play-info') && u.includes('ep=4')) return new Response(JSON.stringify({ code: 0, data: { streams: [{ id: 'ph', format: 'MP4', url: 'https://macdn.aoneroom.com/other/2026/10/10/x.mp4', resolutions: '1080,720,480' }] } }), { headers: { 'content-type': 'application/json' } });
+    if (u.startsWith('https://bcdnxw.hakunaymatata.com/')) { calls.push({ kind: 'media', range: new Headers(init.headers || {}).get('range') }); return new Response('xx', { status: 206, headers: { 'content-type': 'video/mp4' } }); }
+    return base(url, init);
+  };
+  f.calls = calls;
+  return f;
+}
+const withGateway = async (cfg, fn) => { const prev = mx.env.gateway; mx.env.gateway = () => cfg; try { return await fn(); } finally { mx.env.gateway = prev; } };
+
+test('mavonyx deviation: with a gateway, the web API is asked through it with the movie-page Referer (Cloudflare gets 429)', async () => {
+  const f = webEmptyUpstream();
+  const ep4 = await withGateway({ url: 'http://127.0.0.1:8090/', token: 'tk' }, () => mx.lookup({ ...META.tv, episode: 4 }, makeCtx(direct(f), mx)));
+  assert.deepEqual(ep4.map((c) => [c.url, c.resolution]), [['https://bcdnxw.hakunaymatata.com/resource/gw.mp4?sign=s&t=1', '1080p']]);
+  const g = f.calls.find((c) => c.kind === 'gateway');
+  assert.equal(g.u, 'http://127.0.0.1:8090/p?k=tk');
+  assert.equal(g.ct, 'text/plain'); // a CORS simple request, like net.js
+  assert.equal(g.env.method, 'GET');
+  assert.match(g.env.url, /^https:\/\/h5-api\.aoneroom\.com\/wefeed-h5api-bff\/subject\/play\?subjectId=301&se=1&ep=4&detailPath=breaking-bad-q1&/);
+  assert.equal(g.env.headers.Referer, 'https://movie-box.co/movies/breaking-bad-q1?id=301&type=/movie/detail&detailSe=&detailEp=&lang=en');
+  assert.ok(!f.calls.some((c) => c.kind === 'site'), 'the site Function is not needed');
+});
+
+test('mavonyx: without a gateway (or when it finds nothing) the site Function is asked; the trace shows its message', async () => {
+  const f = webEmptyUpstream();
+  const none = await withGateway({ url: '' }, () => mx.lookup({ ...META.tv, episode: 4 }, makeCtx(direct(f), mx)));
+  assert.deepEqual(none, []);
+  assert.ok(f.calls.some((c) => c.kind === 'site') && !f.calls.some((c) => c.kind === 'gateway'));
+  const t = (await withGateway({ url: '' }, () => mx.trace(makeCtx(direct(webEmptyUpstream()), mx), { ...META.tv, episode: 4 }))).join('\n');
+  assert.match(t, /^site web play 301: HTTP 502 MovieBox answered 429\.$/m);
+  const g2 = webEmptyUpstream({ gwStreams: false });
+  await withGateway({ url: 'http://127.0.0.1:8090' }, () => mx.lookup({ ...META.tv, episode: 4 }, makeCtx(direct(g2), mx)));
+  assert.deepEqual(g2.calls.filter((c) => c.kind !== 'media').map((c) => c.kind), ['gateway', 'site']);
+});
+
+test('mavonyx trace: probes the first bytes of the stream it found (does the video server accept a browser?)', async () => {
+  const f = webEmptyUpstream();
+  const t = (await withGateway({ url: 'http://127.0.0.1:8090' }, () => mx.trace(makeCtx(direct(f), mx), { ...META.tv, episode: 4 }))).join('\n');
+  assert.match(t, /^gateway web play 301: 1 streams, hasResource true$/m);
+  assert.match(t, /^media probe bcdnxw\.hakunaymatata\.com: HTTP 206 video\/mp4$/m);
+  assert.equal(f.calls.find((c) => c.kind === 'media').range, 'bytes=0-1');
+});
