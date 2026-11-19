@@ -4,7 +4,7 @@
 
 ## Status
 
-* Built and tested: 162 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
+* Built and tested: 166 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
 * **Connection and playback fixes (Nov 19, 2026)**, from the owner's report "Fendrix: 1 found but never plays; Hexion and BDIX unreachable" and live checks against the deployment (`VERIFICATION.md` section 18):
   * *Endless spinner*: the player's watchdog was armed only after the first `canplay`, and hls.js failures were never reported. Without built-in HLS (Firefox, older Chrome) Fendrix's CDN refuses hls.js (it 404s any foreign `Origin`), so the page spun forever. Now the player gives up in about a second and explains (built-in HLS, gateway or external player).
   * *FlixHub is a BDIX server* (original: "FlixHub FTP: BDIX"); it was wrongly sent through the Cloudflare edge proxy (504). Now it is treated like DhakaFlix and Circle FTP.
@@ -14,6 +14,7 @@
 * Online sources **Fendrix** and **Hexion** (Nov 2026): ported, checked against the live services from the sandbox (VERIFICATION section 18) and covered by parity tests against the original scraper files. Fendrix plays with built-in HLS (Chrome/Edge 142+, Safari), through the gateway in other browsers (Firefox: HLS playlists rewritten, tested with hls.js), or in an external player; Hexion's link domains rotate (`EDGE_PROXY_HOSTS`).
 * **Accounts, lists, sync** (Nov 2026): invite-only accounts on Cloudflare D1, sign-in, password change, admin page (invites, users), named watch lists, history removal with Undo, and a merge-based sync of history/lists/resume positions/settings between devices. Unit, multi-device browser and real-`workerd`+D1 tests. Deploy steps: README *Accounts*.
 * **Not verified**: Mavonyx against the live API (region-gated from the sandbox: real stream URLs, formats, sign cookies and caption hosts unseen); a live D1 database on Cloudflare (local D1 in workerd only); the real BDIX servers (DhakaFlix, Circle FTP, FlixHub), TMDB and OpenSubtitles were unreachable during development (mocks used); the deployment `raftv.pages.dev` was only read (public GETs), nothing was deployed from a session; Fendrix playback in the owner's own browser; Firefox/Safari; real phones; https `pages.dev` with the gateway. See `VERIFICATION.md` section 14.
+* **Gateway as a Windows program** (`raftv-gateway.exe`, Nov 19, 2026): the unchanged gateway plus a small launcher (`gateway/exe-main.mjs`: settings file next to the program, random token kept, reachable on the LAN, only the RafTV origin), packed with Node's single-executable feature (`npm run build:gateway`). GitHub Actions builds it on Windows, runs it (`scripts/smoke-gateway-exe.mjs`) and attaches it to a release on a `gateway-v*` tag. Tested: the bundled launcher with every gateway feature the site uses; a Linux build of the same program run and measured (0.04 s start, ~60 MB idle, ~100 MB streaming). Not run here: the Windows `.exe` itself (only in CI), SmartScreen, a phone using it over Wi-Fi.
 * Key constraint: **Cloudflare cannot reach BDIX**, and an https page cannot freely call http BDIX servers. On `pages.dev` the user normally needs the **gateway** (`gateway/bdix-gateway.mjs`) on their own device or network.
 
 ## Read order
@@ -54,7 +55,7 @@ Outside npm: **Node 22+**; **ffmpeg** with libx264/libx265/vpx/aac/ac3/opus for 
 
 ```bash
 npm ci                    # installs everything incl. Chromium and workerd binaries (no other downloads needed)
-npm test                  # 162 tests, ~3 s
+npm test                  # 166 tests, ~3 s
 npm run e2e:media         # once; writes e2e/media/ (git-ignored)
 npm run e2e               # ~4 min; add a word to run matching steps only
 npm run smoke:cf          # ~20 s
@@ -89,7 +90,7 @@ READ FIRST, in this order, before changing anything:
 my task  4. VERIFICATION.md (before touching tests).
 
 SETUP: Node 22+, run `npm ci`, then `npm test` and confirm the baseline before
-you change code (162 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
+you change code (166 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
 (38 steps).
 
 TASK: <one or two sentences: what I want, and why>

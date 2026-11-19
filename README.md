@@ -146,6 +146,27 @@ Left unchanged on purpose: the `rh:` prefix of saved settings (changing it would
 
 Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a VPS in Bangladesh). Zero dependencies.
 
+**Windows, no install (`raftv-gateway.exe`).** Download `raftv-gateway.exe` from the repository's *Releases* page (built by GitHub from this code: `.github/workflows/gateway-exe.yml`; push a tag such as `gateway-v1.0.0`, or run the workflow by hand and take the file from the run's *Artifacts*). Put it in its own folder and double-click it:
+
+1. Windows may say "Windows protected your PC" (the program is not code-signed): *More info*, *Run anyway*. When the firewall asks, allow it on **Private networks**.
+2. The window shows what to enter in RafTV, *Settings*, *Connection*: an **Address** (`http://192.168.x.x:8787`, for your phone) and a **Token**. On the same PC you can use `http://127.0.0.1:8787`.
+3. Keep the window open while you watch; close it to stop.
+
+The first start writes `raftv-gateway.json` next to the program: the token (kept, so your phone keeps working after a restart), `host` (`0.0.0.0` = reachable from your Wi-Fi), `port`, `allowedOrigins` (only `https://raftv.pages.dev`; add your own domain if you use one), optionally `allowPrivate`, `tlsKey`, `tlsCert`. Edit it and restart to change them; the environment variables below override it. Build it yourself with `npm run build:gateway` (Windows: run it on Windows; it makes a program for the system it runs on). Measured (Linux build of the same program): starts in about 0.04 s, about 60 MB of memory idle (mostly the Node runtime inside it), about 100 MB while streaming at full local speed, negligible CPU.
+
+**What goes through the gateway** (nothing else does: the site itself, TMDB, subtitles and accounts never):
+
+| Source | Through the gateway |
+|---|---|
+| DhakaFlix, Circle FTP, FlixHub | lookups and video (they are BDIX servers) |
+| Hexion | lookups; video comes straight from the file host |
+| Fendrix | nothing, except its video in browsers without built-in HLS (Firefox) |
+| Mavonyx | only the request that lists the real files (it needs a Referer a browser cannot send, and MovieBox refuses Cloudflare); token, search and video go direct |
+
+**From a phone (https site, gateway on your PC over plain http):** Chrome on Android 142+ asks once to allow access to devices on your local network for a private address like `192.168.x.x`; allow it. Other browsers may refuse an `http` gateway from an `https` page. Not verified end to end here (see `VERIFICATION.md`, section 14).
+
+**With Node instead:**
+
 ```bash
 node gateway/bdix-gateway.mjs                                   # listens on 127.0.0.1:8787, no token needed (loopback only)
 HOST=0.0.0.0 GATEWAY_TOKEN=choose-a-secret node gateway/bdix-gateway.mjs   # reachable from other devices on your network
@@ -170,7 +191,7 @@ Traffic caveat: through the gateway, video flows *server → gateway → your de
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local server (static + API + `_headers`) |
-| `npm test` | 162 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
+| `npm test` | 166 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
 | `npm run e2e:media` | Generates the small test videos (needs `ffmpeg`) |
 | `npm run e2e` | 38 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
 | `npm run smoke:cf` | Runs the real Cloudflare runtime (`wrangler pages dev` / workerd) against a mock TMDB: 9 Cloudflare runtime checks of the Function, routing and headers |
