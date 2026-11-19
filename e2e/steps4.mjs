@@ -329,6 +329,10 @@ export async function steps4(ctx) {
       await page.evaluate(() => [...document.querySelectorAll('dialog[open] button')].find((x) => /Test connection/.test(x.textContent)).click());
       await waitFor(() => page.$('[data-host="Mavonyx"][data-state]'), { what: 'Mavonyx diagnostic' });
       assert.equal(await text(page, '[data-host="Mavonyx"] span:last-child'), 'reachable (token via web API)');
+      // the lookup trace (Inception; this mock's catalogue only has The Matrix) says where the lookup ended
+      await waitFor(() => page.$('[data-trace="mavonyx"] pre'), { what: 'Mavonyx trace' });
+      const tr = await text(page, '[data-trace="mavonyx"] pre');
+      assert.match(tr, /^token: web API$/m); assert.match(tr, /^best: "The Matrix" 1999 score -?\d+ \(needs 40\)/m); assert.match(tr, /^streams found: 0$/m);
       await page.evaluate(() => document.querySelector('[data-host="Mavonyx"]').scrollIntoView({ block: 'center' }));
       await shot(page, 'mavonyx-test-connection');
       assert.deepEqual(await b.cspViolations(page), []);

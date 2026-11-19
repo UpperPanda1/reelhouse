@@ -97,7 +97,8 @@ const CAPTIONS = {
 /*  `hideAppToken`: apig's x-user cannot be read (live in a browser: apig sends no access-control-expose-headers).
  *  `acceptWebToken`: the app API accepts the web API's anonymous token. `webDown`: the web API answers 503. */
 // `api3IssuesToken`: the app API host answers the token request too (its replies expose x-user)
-function upstream({ expire = false, region = false, hideAppToken = false, acceptWebToken = false, webDown = false, api3IssuesToken = false } = {}) {
+// `searchCode`: the app search answers HTTP 200 with this error code in the body
+function upstream({ expire = false, region = false, hideAppToken = false, acceptWebToken = false, webDown = false, api3IssuesToken = false, searchCode = null } = {}) {
   const calls = [];
   let issued = 0;
   let refused = false;
@@ -129,6 +130,7 @@ function upstream({ expire = false, region = false, hideAppToken = false, accept
       if (expire && !refused && auth === 'Bearer hdr.tok1.sig') { refused = true; return json(401, { code: 401, message: 'token expired' }); }
       const p = u.pathname;
       const q = u.searchParams;
+      if (p === '/wefeed-mobile-bff/subject-api/search/v2' && method === 'POST' && searchCode) return json(200, { code: searchCode, message: 'token invalid' });
       if (p === '/wefeed-mobile-bff/subject-api/search/v2' && method === 'POST') {
         const { keyword } = JSON.parse(body);
         return json(200, { code: 0, data: { results: [{ subjects: SUBJECTS[keyword] || [] }, { subjects: null }] } });
@@ -374,4 +376,23 @@ test('mavonyx: once the app API refuses the web token, the lookup stops asking i
   await mx.lookup(META.movie, makeCtx(direct(f), mx));
   const app = f.calls.filter((c) => c.url.startsWith('https://api3.aoneroom.com/wefeed-mobile-bff/subject-api/'));
   assert.ok(app.length <= 2, `app API calls after the refusal: ${app.length}`);
+});
+
+test('mavonyx trace (Settings): every stage of a real lookup is written down', async () => {
+  const lines = await mx.trace(makeCtx(direct(upstream({ hideAppToken: true, api3IssuesToken: true })), mx));
+  const text = lines.join('\n');
+  for (const re of [/^token: app host$/m, /^app search "Inception": 4 results/m, /^best: "Inception" 2010 score \d+ \(needs 40\)/m,
+    /^subject 111: 5 audio tracks \(English, Hindi dub, Tamil dub, Arabic sub, English dub\), enabled 3$/m,
+    /^play-info 111: 6 streams \(MP4 1080, HLS 720, HLS 1080P, DASH 2160 signed, \? 1080 signed, DASH 1080\)$/m,
+    /^track English: app 4, web 2 \[.*MP4 480p\], kept 4/m, /^streams found: 6$/m]) assert.match(text, re);
+  // an episode with no streams: the trace says where it ended
+  const tv = (await mx.trace(makeCtx(direct(upstream()), mx), { ...META.tv, episode: 3 })).join('\n');
+  assert.match(tv, /^play-info 301: 0 streams$/m);
+  assert.match(tv, /^streams found: 0$/m);
+});
+
+test('mavonyx diagnose: an HTTP 200 carrying an error code is not "reachable"', async () => {
+  assert.deepEqual(await mx.diagnose(makeCtx(direct(upstream({ searchCode: 401 })), mx)), { ok: false, text: 'app API answered HTTP 200 but code 401 token invalid' });
+  const t = (await mx.trace(makeCtx(direct(upstream({ searchCode: 401 })), mx))).join('\n');
+  assert.match(t, /search\/v2|v2: HTTP 200 but code 401 token invalid/);
 });
