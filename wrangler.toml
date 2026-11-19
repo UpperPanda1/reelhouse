@@ -2,6 +2,14 @@ name = "raftv"
 compatibility_date = "2025-09-01"
 pages_build_output_dir = "public"
 
+# Plain (non-secret) variables for the Function. EDGE_PROXY_HOSTS replaces the built-in list in lib/api.js
+# (DEFAULT_EDGE_PROXY_HOSTS): the exact hosts /api/proxy may fetch. Default + vidbolt.xyz, to test whether
+# VidBolt (the Esvyl source) answers Cloudflare's servers:
+#   https://raftv.pages.dev/api/proxy?u=https%3A%2F%2Fvidbolt.xyz%2Fapi%2Fresolve%3Ftype%3Dmovie%26id%3D603
+# Remove this block to go back to the default. Never add flixhub.net: it is a BDIX server Cloudflare cannot reach.
+[vars]
+EDGE_PROXY_HOSTS = "4khdhub.one,www.4khdhub.one,greenmotors.club,hubdrive.blog,hubcloud.mov,gamerxyt.com,vidbolt.xyz"
+
 # Secrets are NOT stored here. Set them in the Cloudflare dashboard (Settings > Variables and Secrets)
 # or locally in .dev.vars (see .dev.vars.example):
 #   TMDB_API_KEY, OPENSUBTITLES_API_KEY (optional), OPENSUBTITLES_USERNAME / OPENSUBTITLES_PASSWORD (optional)
