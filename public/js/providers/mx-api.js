@@ -441,7 +441,8 @@ async function fetchMobileStreams(api, playback, site) {
   if (!Array.isArray(streams)) return [];
   const base = siteHeaders(site.origin, site.path, playback.subjectId);
   const dashFirst = streams.filter(isDash).concat(streams.filter((s) => !isDash(s)));
-  return dashFirst.map((s) => streamCandidate(s, base, s.format, playback)).filter((c) => c && c.format !== 'MP4');
+  // MP4 kept here; resolveAudioTrack drops it like the original unless the track would end up empty
+  return dashFirst.map((s) => streamCandidate(s, base, s.format, playback)).filter(Boolean);
 }
 async function fetchWebStreamsFromOrigin(ctx, api, origin, path, playback) {
   // the original also sends User-Agent and Referer here; a browser cannot
@@ -450,9 +451,11 @@ async function fetchWebStreamsFromOrigin(ctx, api, origin, path, playback) {
     const token = api.s.token ? api.s.token : await api.ensureToken(false);
     if (token) headers.Authorization = 'Bearer ' + token;
     const res = await ctx.response(`${origin}/wefeed-h5api-bff/subject/play?subjectId=${playback.subjectId}&se=${playback.season}&ep=${playback.episode}&detailPath=${path}&streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1`, { headers });
-    if (!res || res.status !== 200) return null;
+    if (!res || res.status !== 200) { api.note(`web play ${playback.subjectId} @ ${origin.replace(/^https?:\/\//, '')}: ${res ? 'HTTP ' + res.status : 'no reply'}`); return null; }
     const json = await res.json();
-    const streams = json && json.data && json.data.streams;
+    const d = (json && json.data) || {};
+    const streams = d.streams;
+    api.note(`web play ${playback.subjectId} @ ${origin.replace(/^https?:\/\//, '')}: code ${json && json.code}, ${Array.isArray(streams) ? streams.length : 'no'} streams, hasResource ${d.hasResource}, limited ${d.limited}${d.limitedCode ? ' ' + d.limitedCode : ''}, maxResolution ${d.playConfig && d.playConfig.maxResolution}`);
     return Array.isArray(streams) && streams.length ? { origin, streams } : null;
   } catch (e) { return unlessAbort(null)(e); }
 }
@@ -504,13 +507,21 @@ async function resolveAudioTrack(ctx, api, context, track) {
     if (site.origin) origins.push(String(site.origin).replace(/\/+$/, ''));
     if (!origins.includes(endpoints.web)) origins.push(endpoints.web);
     const playback = { subjectId: track.subjectId, season: context.season, episode: context.episode };
-    const [mob, web] = await Promise.all([
+    const [mobAll, web] = await Promise.all([
       fetchMobileStreams(api, playback, site).catch(unlessAbort([])),
       fetchWebStreams(ctx, api, origins, site.path || '', playback).catch(unlessAbort([])),
     ]);
+    const mob = mobAll.filter((c) => c.format !== 'MP4'); // the original takes MP4 only from the web API
     const all = mob.concat(web);
-    const candidates = all.filter((c) => isResolutionEnabled(c.resolution));
-    api.note(`track ${track.language}: app ${mob.length}, web ${web.length}${all.length ? ' [' + all.map((c) => `${c.format} ${c.resolution}`).join(', ') + ']' : ''}, kept ${candidates.length} (resolutions on: 2160p, 1080p, unknown${readToggle('res_720p', false) ? ', 720p' : ''})`);
+    let candidates = all.filter((c) => isResolutionEnabled(c.resolution));
+    // DEVIATION (owner's live trace, 19 Nov 2026): in a browser the web API returns no streams, and the app API's
+    // only stream is often an MP4 ("1080,720,480"). Rather than end with nothing, keep that MP4 (same resolution filter).
+    let fallback = '';
+    if (!candidates.length) {
+      candidates = mobAll.filter((c) => c.format === 'MP4' && isResolutionEnabled(c.resolution));
+      if (candidates.length) fallback = `, app MP4 used (${candidates.map((c) => { try { return new URL(c.url).host; } catch { return '?'; } }).join(', ')})`;
+    }
+    api.note(`track ${track.language}: app ${mob.length} (+${mobAll.length - mob.length} MP4), web ${web.length}${all.length ? ' [' + all.map((c) => `${c.format} ${c.resolution}`).join(', ') + ']' : ''}, kept ${candidates.length}${fallback} (resolutions on: 2160p, 1080p, unknown${readToggle('res_720p', false) ? ', 720p' : ''})`);
     if (!candidates.length) return [];
     const subtitles = readToggle('subtitles', true) ? await fetchSubtitles(api, candidates[0].streamId, track.language, track.subjectId).catch(unlessAbort([])) : [];
     return candidates.map((c) => ({ ...c, language: track.language, subtitles }));
