@@ -7,7 +7,7 @@ import { hrefWatch, href } from '../router.js';
 import { openSources } from './sources.js';
 import { BRAND } from '../brand.js';
 
-const metaOf = (d, season, episode) => ({ type: d.type, tmdbId: String(d.id), title: d.title, year: d.year, imdbId: d.imdbId || '', season, episode });
+const metaOf = (d, season, episode) => ({ type: d.type, tmdbId: String(d.id), title: d.title, originalTitle: d.originalTitle, year: d.year, rating: d.rating, imdbId: d.imdbId || '', season, episode });
 
 /** + / check button: opens "Save to list" (a switch per list, and a field to start a new one). */
 function listButton(d) {

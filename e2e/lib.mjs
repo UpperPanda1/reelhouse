@@ -100,7 +100,7 @@ export async function startGateway({ origin, token = 'tok', allowPrivate = ['127
 }
 
 /** Hosts the browser contacts directly for Fendrix (and Hexion's file hosts); aborted unless a step mocks them. */
-export const PUBLIC_SOURCE_HOSTS = /^(enc-dec\.app|api\.wing\.st|api\.shegu\.st|api\.shegu\.xyz|.*\.workers\.dev|.*\.r2\.dev|.*\.r2\.cloudflarestorage\.com|pixeldrain\.com)$/;
+export const PUBLIC_SOURCE_HOSTS = /^(enc-dec\.app|.*\.aoneroom\.com|.*\.inmoviebox\.com|themoviebox\.xyz|api\.wing\.st|api\.shegu\.st|api\.shegu\.xyz|.*\.workers\.dev|.*\.r2\.dev|.*\.r2\.cloudflarestorage\.com|pixeldrain\.com)$/;
 
 export async function launch() {
   // @sparticuz/chromium ships Lambda-oriented flags that switch browser security OFF (CORS, mixed content, site isolation).
@@ -123,6 +123,11 @@ export async function launch() {
       // Fendrix's session broker answers "no session" (a valid reply: no console noise), anything else is cut off.
       if (u.hostname === 'enc-dec.app') return r.respond({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"status":404,"error":"not found"}' });
       if (u.hostname === 'api.wing.st') return r.respond({ status: 404, contentType: 'text/plain', headers: { 'access-control-allow-origin': '*' }, body: 'not found' }); // Settings -> Test connection
+      // Mavonyx (MovieBox API): CORS like the live servers, an empty catalogue (a valid reply: "no match")
+      if (/^(apig\.inmoviebox\.com|api3\.aoneroom\.com|h5-api\.aoneroom\.com)$/.test(u.hostname)) {
+        const rh = r.headers();
+        return r.respond({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': rh.origin || '*', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-allow-headers': rh['access-control-request-headers'] || '', 'access-control-expose-headers': '*' }, body: r.method() === 'OPTIONS' ? '' : '{"code":0,"data":{"results":[],"streams":[]}}' });
+      }
       if (PUBLIC_SOURCE_HOSTS.test(u.hostname)) return r.abort('internetdisconnected');
       if (u.hostname === 'image.tmdb.org') {
         return r.respond({ status: 200, contentType: 'image/svg+xml', headers: { 'access-control-allow-origin': '*' }, body: placeholderSvg('/' + u.pathname.split('/').pop().replace(/\.\w+$/, '')) });

@@ -127,7 +127,7 @@ export function watchView({ root, route, signal }) {
   function openSourcesSheet() {
     openSources({ meta: metaFor(), title: displayTitle(), mode: 'play', selectedId: player ? player.stream.id : undefined, onPlay: (st) => { mount(banners); player ? player.switchTo(st) : startPlayer(st); } });
   }
-  const metaFor = () => ({ type, tmdbId: id, title: d.title, year: d.year, imdbId: d.imdbId || '', season, episode });
+  const metaFor = () => ({ type, tmdbId: id, title: d.title, originalTitle: d.originalTitle, year: d.year, rating: d.rating, imdbId: d.imdbId || '', season, episode });
   const displayTitle = () => d.title + (type === 'tv' ? ` S${season}E${episode}` : d.year ? ` (${d.year})` : '');
 
   // ---------------- start ----------------

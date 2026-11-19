@@ -13,7 +13,7 @@ test('store: settings defaults, deep merge, reset, corrupt data falls back', () 
   assert.deepEqual(st.settings(), DEFAULT_SETTINGS);
   st.saveSettings({ gatewayUrl: 'http://127.0.0.1:8787', providers: { 'bdix-fh': false }, subStyle: { size: 130 } });
   const s = st.settings();
-  assert.equal(s.gatewayUrl, 'http://127.0.0.1:8787'); assert.deepEqual(s.providers, { 'bdix-df': true, 'bdix-cf': true, 'bdix-fh': false, fendrix: true, hexion: true }, 'deep merge keeps the other defaults');
+  assert.equal(s.gatewayUrl, 'http://127.0.0.1:8787'); assert.deepEqual(s.providers, { 'bdix-df': true, 'bdix-cf': true, 'bdix-fh': false, fendrix: true, hexion: true, mavonyx: true }, 'deep merge keeps the other defaults');
   assert.deepEqual(s.subStyle, { size: 130, color: '#ffffff', bg: 'shadow', bottom: 6 });
   const bad = mem(); bad.setItem('rh:settings', '{not json'); assert.deepEqual(createStore(bad).settings(), DEFAULT_SETTINGS);
   st.resetSettings(); assert.deepEqual(st.settings(), DEFAULT_SETTINGS);

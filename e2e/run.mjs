@@ -167,7 +167,7 @@ try {
     assert.ok(bdix.log.some((r) => r.path === '/watch/movie/the-matrix'), 'FlixHub (a BDIX server) fetched by the browser');
     assert.ok(!app.mockLog.some((l) => l.includes('flixhub')), 'FlixHub never through the Cloudflare edge proxy');
     const chips = await page.$$eval('.pstat .chip', (e) => e.map((x) => x.textContent));
-    assert.deepEqual(chips, ['DhakaFlix: 5 found', 'Circle FTP: 1 found', 'FlixHub: 1 found', 'Fendrix: no match', 'Hexion: no match'], 'online sources are asked too (in this test neither has the title)');
+    assert.deepEqual(chips, ['DhakaFlix: 5 found', 'Circle FTP: 1 found', 'FlixHub: 1 found', 'Fendrix: no match', 'Hexion: no match', 'Mavonyx: no match'], 'online sources are asked too (in this test none has the title)');
     const t = await page.$$eval('.ticket', (els) => els.map((e) => ({ name: e.querySelector('.name').textContent, q: e.querySelector('.stub b').textContent, level: e.dataset.level, tags: [...e.querySelectorAll('.tag')].map((x) => x.textContent) })));
     assert.equal(t.length, 6, 'Circle and FlixHub return the same file URL in this mock; identical URLs are de-duplicated into one ticket');
     assert.ok(t[0].name.endsWith('1080p.WEB-DL.x264.AAC.mp4') && t[0].level === 'ok', 'best playable source first: ' + t[0].name);

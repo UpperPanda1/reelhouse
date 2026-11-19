@@ -7,7 +7,7 @@ Copyright (C) the RafTV authors. Licensed under the **GNU General Public License
 `public/js/providers/df.js`, `cf.js`, `fh.js` (and the parsing in `common.js`) are a browser port of the three scrapers in **eclipsia-bdix** from the CloudStream extension repository at `https://gitea.com/eclipsia/cloudstream`, licensed GPL-3.0. The algorithms (search patterns, filters, scoring, extraction order) follow the originals; the code was rewritten for browsers and extended (see `docs/IMPLEMENTATION.md`, section 6). `test/fixtures/golden.json` contains outputs recorded from the original scrapers; it is data, not code.
 
 ## Derived code: Eclipsia online-source scrapers
-`public/js/providers/fn.js` (Fendrix), `hx.js` (Hexion) and `aesgcm.js` are a browser port of the `fendrix.js` and `hexion.js` scrapers of the **Eclipsia** CloudStream extension (same repository family, GPL-3.0; copies kept under `cloudstream-main/cloudstream/providers/`, and the tests run those copies unchanged for parity). Requests, filtering and decoding follow the originals; differences are listed in `docs/IMPLEMENTATION.md`, section 6.
+`public/js/providers/fn.js` (Fendrix), `hx.js` (Hexion), `mx.js`/`mx-api.js` (Mavonyx) and `aesgcm.js` are a browser port of the `fendrix.js`, `hexion.js` and `mavonyx.js` scrapers of the **Eclipsia** CloudStream extension (same repository family, GPL-3.0; copies kept under `cloudstream-main/cloudstream/providers/`, and the tests run those copies unchanged for parity). Requests, filtering and decoding follow the originals; differences are listed in `docs/IMPLEMENTATION.md`, section 6.
 
 If you distribute or host this site for others, GPL-3.0 requires that you keep these notices and make the corresponding source available under GPL-3.0.
 

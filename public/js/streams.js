@@ -3,7 +3,7 @@
 // both WITHOUT a media error. MOV/MKV with H.264+AAC play fine whatever Content-Type the server sends.
 import { sanitizeFilename } from './util.js';
 
-const PROVIDER_ORDER = { 'bdix-df': 0, 'bdix-cf': 1, 'bdix-fh': 2, fendrix: 3, hexion: 4 };
+const PROVIDER_ORDER = { 'bdix-df': 0, 'bdix-cf': 1, 'bdix-fh': 2, fendrix: 3, hexion: 4, mavonyx: 5 };
 const CONTAINER_SCORE = { mp4: 4, m4v: 4, mov: 3, webm: 3, m3u8: 3, mkv: 2, ts: 1, avi: 0, unknown: 1 };
 const LEVEL = { ok: 0, warn: 1, bad: 2 };
 
@@ -37,6 +37,8 @@ export function playability(stream, caps) {
   if (info.video === 'xvid') bump('bad', 'XviD video is not supported by browsers');
   // caps.gateway: a gateway is configured; it fetches such streams without an Origin (net.mediaUrl, player only)
   if (stream.needsNativeHls && !caps.nativeHls && !caps.gateway) bump('bad', 'This server only plays in browsers with built-in HLS (Chrome 142+, Edge, Safari), through the gateway (Settings, Connection) or in an external player');
+  if (stream.container === 'mpd') bump('bad', 'DASH does not play here yet; try an external player');
+  if (stream.signedCookie) bump('warn', 'May need a cookie a browser cannot send');
   if (info.video === 'vc1') bump('bad', 'VC-1 video is not supported by browsers');
   if (info.video === 'av1' && !caps.av1) bump('bad', 'AV1 video is not supported by this browser');
   const audio = info.audio || [];
