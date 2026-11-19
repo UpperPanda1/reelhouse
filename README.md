@@ -170,7 +170,7 @@ Traffic caveat: through the gateway, video flows *server → gateway → your de
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local server (static + API + `_headers`) |
-| `npm test` | 153 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
+| `npm test` | 159 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
 | `npm run e2e:media` | Generates the small test videos (needs `ffmpeg`) |
 | `npm run e2e` | 38 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
 | `npm run smoke:cf` | Runs the real Cloudflare runtime (`wrangler pages dev` / workerd) against a mock TMDB: 9 Cloudflare runtime checks of the Function, routing and headers |

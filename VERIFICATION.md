@@ -208,6 +208,7 @@ Procedure: edit the code to re-introduce the bug, run `npm test`, confirm exactl
 | Accounts (16 mutations: Origin check, JSON check, admin role, disabled/used/expired invites, session revocation on password change, bootstrap when an admin exists, reserved admin name, login rate limit, session expiry, sliding expiry, self-removal, cross-user sync read, optimistic concurrency, normalization, Secure cookie) | `test/accounts.test.mjs` (3 were first missed and got tests) |
 | Sync engine (conflict not merged, sign-out keeps data, 401 ignored, apply guard removed) | `test/account-sync.test.mjs` (2 were first missed and got tests) |
 | Mavonyx: query not sorted / HMAC inner pad 55 / body length in characters / no token refresh / no DASH-first order / `User-Agent` sent / no original-title search / mobile MP4 kept | `mavonyx parity ...` (and the helper, token, header and scenario tests) |
+| Mavonyx: no `/api/mavonyx/play` fallback / the original's placeholder date check / Function without the Referer / `detailPath` unvalidated / `http:` stream URLs passed / `codecName` ignored | the edge-fallback, placeholder, `/api/mavonyx/play` and codec tests |
 | Mavonyx: no app-MP4 fallback / fallback without the resolution filter | `a track whose only stream is the app API's MP4 keeps it ...` |
 | Mavonyx trace and the JSON-code check | `mavonyx trace (Settings) ...`, `mavonyx diagnose: an HTTP 200 carrying an error code ...`; E2E step 31 reads the trace in Settings |
 | Mavonyx: no app-host token step / no stop after the app API refused the web token | `app token hidden on apig but issued by the app API host` / `once the app API refuses the web token ...` |
@@ -273,7 +274,7 @@ Test-side mistakes (not product bugs) were also found and corrected, e.g. a taut
 
 | Suite | Result |
 |---|---|
-| `npm test` | 153 tests pass |
+| `npm test` | 159 tests pass |
 | `npm run e2e` | 38 steps pass; no browser console errors (steps 26-28 allow exactly the fallback endpoint's CORS error, and step 28 the CDN's refusal of hls.js, which is the case under test); no CSP violations |
 | `npm run smoke:cf` | 9 checks pass |
 | `npm run check:docs` | passes |
@@ -373,6 +374,8 @@ Done by hand from the sandbox, not part of any test (tests never reach the inter
 | Preflight to `api3.aoneroom.com` and `h5-api.aoneroom.com`, Origin `https://raftv.pages.dev`, all signed headers requested | 200, that Origin echoed, every requested header allowed, `expose-headers: *`, `allow-credentials: true`, max-age 86400 |
 | `mavonyx.js` vs the copy in the plugin's assets | identical |
 | Preflight + GET to `apig.inmoviebox.com` with Origin `https://raftv.pages.dev` (checked after the owner saw "no match") | preflight: `allow-origin: *`, `allow-headers: *`, methods GET; response: `allow-origin: *` and **no `expose-headers`**: the `x-user` token is invisible to a page (the earlier check covered only `api3` and `h5-api`) |
+| `h5-api.../subject/play` for Inception (anonymous token), Referer variants (after the owner's trace showed the placeholder video) | none / our domain / site root / `/movies/x?id=` / UA only: `hasResource: false`, 0 streams. `https://movie-box.co/movies/<detailPath>?id=...` (also `themoviebox.xyz`, `h5-api...`, and without `?id`): 1 stream `bcdnxw.hakunaymatata.com/tran-audio/...mp4?sign=...` 1080p `codecName: h264`, also without any token. Origin header irrelevant. Breaking Bad S1E1: 4 H.264 files 360-1080p |
+| `hakunaymatata` file, 100-byte range from the sandbox | 429 without Referer, 428 with the movie Referer (`text/html`), `ACAO: *`: blocked for this IP either way; untested from Bangladesh |
 | Web API search items (Breaking Bad, Pathaan) | same fields as the app API's (`subjectId`, `subjectType`, `title`, `releaseDate`, `imdbRatingValue`, `detailPath`, `dubs`); TV listed per season under one `subjectId` |
 
 ## 19. Accounts in the real Cloudflare runtime

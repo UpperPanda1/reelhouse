@@ -19,6 +19,8 @@ export const endpoints = {
   mobile: 'https://api3.aoneroom.com',
   web: 'https://h5-api.aoneroom.com',
   site: 'https://themoviebox.xyz',
+  /** this site's Function (lib/mavonyx.js): the web API with the Referer a page cannot send */
+  edgePlay: '/api/mavonyx/play',
 };
 /** The original's SCRAPER_SETTINGS (toggles: subtitles, res_2160p, res_1080p, res_720p, dub_<label>). Empty = its defaults. */
 export const settings = {};
@@ -381,7 +383,9 @@ export function manifestUrlFromCookie(signCookie) {
   }
   return null;
 }
-const isPlaceholderStream = (resolved, original) => resolved.includes(PLACEHOLDER) || (resolved === original && original.includes('/other/2026/09/'));
+// DEVIATION: the original matches only "/other/2026/09/"; the announcement video moved on (owner, 19 Nov 2026:
+// macdn.aoneroom.com/other/2026/10/10/...mp4, a 10 s notice instead of the film). Any dated /other/ path counts.
+const isPlaceholderStream = (resolved, original) => resolved.includes(PLACEHOLDER) || (resolved === original && /\/other\/\d{4}\/\d{2}\/(\d{2}\/)?/.test(original));
 function detectFormat(declared, url) {
   const f = String(declared || '').toUpperCase();
   if (f === 'DASH' || url.includes('.mpd')) return 'DASH';
@@ -406,7 +410,7 @@ function streamCandidate(stream, baseHeaders, declaredFormat, playback) {
   if (isPlaceholderStream(url, originalUrl)) return null;
   const headers = { ...baseHeaders };
   if (signCookie) { headers[stream.signHeaderKey ? String(stream.signHeaderKey) : 'X-MB-Token'] = signCookie; headers.Cookie = signCookie; }
-  return { url, format: detectFormat(declaredFormat, url), resolution: parseResolution(stream.resolutions), headers, signedCookie: !!signCookie,
+  return { url, format: detectFormat(declaredFormat, url), resolution: parseResolution(stream.resolutions), headers, signedCookie: !!signCookie, codec: stream.codecName ? String(stream.codecName).toLowerCase() : '',
     streamId: stream.id != null ? String(stream.id) : `${playback.subjectId}|${playback.season}|${playback.episode}` };
 }
 async function fetchSubtitles(api, streamId, trackLanguage, subjectId) {
@@ -459,9 +463,23 @@ async function fetchWebStreamsFromOrigin(ctx, api, origin, path, playback) {
     return Array.isArray(streams) && streams.length ? { origin, streams } : null;
   } catch (e) { return unlessAbort(null)(e); }
 }
+/** DEVIATION: the web API gives real files only with the movie page on a MovieBox host as Referer (measured), which a
+ *  page cannot send; the site's Function sends it (lib/mavonyx.js). Asked only when the direct calls found nothing. */
+async function fetchEdgeWebStreams(ctx, api, path, playback) {
+  if (!path) return null;
+  try {
+    const res = await ctx.response(`${endpoints.edgePlay}?subjectId=${encodeURIComponent(playback.subjectId)}&se=${playback.season}&ep=${playback.episode}&detailPath=${encodeURIComponent(path)}`);
+    if (!res || res.status !== 200) { api.note(`site web play ${playback.subjectId}: ${res ? 'HTTP ' + res.status : 'no reply'}`); return null; }
+    const json = await res.json();
+    const streams = json && Array.isArray(json.streams) ? json.streams : [];
+    api.note(`site web play ${playback.subjectId}: ${streams.length} streams, hasResource ${json && json.hasResource}`);
+    return streams.length ? streams : null;
+  } catch (e) { return unlessAbort(null)(e); }
+}
 async function fetchWebStreams(ctx, api, origins, path, playback) {
   const replies = await Promise.all(origins.map((o) => fetchWebStreamsFromOrigin(ctx, api, o, path, playback)));
-  const hit = replies.find(Boolean);
+  let hit = replies.find(Boolean);
+  if (!hit) { const edge = await fetchEdgeWebStreams(ctx, api, path, playback); if (edge) hit = { origin: origins[0], streams: edge }; }
   if (!hit) return [];
   const base = siteHeaders(hit.origin, path, playback.subjectId);
   return hit.streams.map((s) => streamCandidate(s, base, 'MP4', playback)).filter(Boolean);
@@ -614,6 +632,9 @@ export async function search(meta, ctx) {
   return list.map((c) => {
     const stream = makeStream({ provider: id, providerName: `${name} (${toAudioDisplayName(c.language)})`, url: c.url, quality: c.resolution, filename: label, headers: c.headers, container: CONTAINER[c.format] });
     stream.direct = true;
+    // the web API names the real codec (h264 / hevc): better than guessing from the URL ("/h265/")
+    if (c.codec === 'hevc' || c.codec === 'h265') stream.info = { ...stream.info, video: 'hevc', codecLabel: 'H.265' };
+    else if (c.codec === 'h264' || c.codec === 'avc') stream.info = { ...stream.info, video: 'avc', codecLabel: 'H.264' };
     // the CDN may want this cookie on every request; a page cannot send cookies for another site (streams.js warns)
     if (c.signedCookie) stream.signedCookie = true;
     if (c.subtitles.length) stream.subtitles = c.subtitles.map((s) => ({ url: s.url, lang: s.language.toLowerCase(), label: s.language }));
