@@ -208,6 +208,7 @@ Procedure: edit the code to re-introduce the bug, run `npm test`, confirm exactl
 | Accounts (16 mutations: Origin check, JSON check, admin role, disabled/used/expired invites, session revocation on password change, bootstrap when an admin exists, reserved admin name, login rate limit, session expiry, sliding expiry, self-removal, cross-user sync read, optimistic concurrency, normalization, Secure cookie) | `test/accounts.test.mjs` (3 were first missed and got tests) |
 | Sync engine (conflict not merged, sign-out keeps data, 401 ignored, apply guard removed) | `test/account-sync.test.mjs` (2 were first missed and got tests) |
 | Mavonyx: query not sorted / HMAC inner pad 55 / body length in characters / no token refresh / no DASH-first order / `User-Agent` sent / no original-title search / mobile MP4 kept | `mavonyx parity ...` (and the helper, token, header and scenario tests) |
+| Mavonyx: no app-host token step / no stop after the app API refused the web token | `app token hidden on apig but issued by the app API host` / `once the app API refuses the web token ...` |
 | Mavonyx: no web-token fallback / no web-search fallback / no error when nothing answered / web item not used as the subject | the hidden-token, web-search, "no match only when answered" and diagnose tests |
 | Mavonyx track stage swallows `AbortError` | `mavonyx: cancelling while the stream lists are loading ...` (first survived: the cancel test aborted at the token request; this test was added) |
 | Wait for every endpoint (`Promise.all`) again | `fendrix: a hanging fallback endpoint does not hold back ...` |
@@ -270,7 +271,7 @@ Test-side mistakes (not product bugs) were also found and corrected, e.g. a taut
 
 | Suite | Result |
 |---|---|
-| `npm test` | 148 tests pass |
+| `npm test` | 150 tests pass |
 | `npm run e2e` | 38 steps pass; no browser console errors (steps 26-28 allow exactly the fallback endpoint's CORS error, and step 28 the CDN's refusal of hls.js, which is the case under test); no CSP violations |
 | `npm run smoke:cf` | 9 checks pass |
 | `npm run check:docs` | passes |

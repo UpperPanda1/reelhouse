@@ -96,7 +96,8 @@ const CAPTIONS = {
  *  `region`: every mobile API host answers like it does outside its regions (403). */
 /*  `hideAppToken`: apig's x-user cannot be read (live in a browser: apig sends no access-control-expose-headers).
  *  `acceptWebToken`: the app API accepts the web API's anonymous token. `webDown`: the web API answers 503. */
-function upstream({ expire = false, region = false, hideAppToken = false, acceptWebToken = false, webDown = false } = {}) {
+// `api3IssuesToken`: the app API host answers the token request too (its replies expose x-user)
+function upstream({ expire = false, region = false, hideAppToken = false, acceptWebToken = false, webDown = false, api3IssuesToken = false } = {}) {
   const calls = [];
   let issued = 0;
   let refused = false;
@@ -116,6 +117,11 @@ function upstream({ expire = false, region = false, hideAppToken = false, accept
     if (u.host === 'apig.inmoviebox.com' && u.pathname === '/wefeed-mobile-bff/tab/ranking-list') {
       issued++;
       return json(200, { code: 0, data: {} }, hideAppToken ? {} : { 'x-user': JSON.stringify({ token: `hdr.tok${issued}.sig`, userType: 0 }) });
+    }
+    if (u.host === 'api3.aoneroom.com' && u.pathname === '/wefeed-mobile-bff/tab/ranking-list') {
+      if (!api3IssuesToken) return json(404, {});
+      issued++;
+      return json(200, { code: 0, data: {} }, { 'x-user': JSON.stringify({ token: `hdr.tok${issued}.sig`, userType: 0 }) });
     }
     if (u.host === 'api3.aoneroom.com') {
       const auth = h.get('authorization') || '';
@@ -320,7 +326,7 @@ test('mavonyx deviation: app token header hidden (live CORS of apig) -> the web 
   const port = await mx.lookup(META.movie, makeCtx(direct(f), mx));
   assert.deepEqual(port.map((c) => c.url), normal.map((c) => c.url));
   assert.ok(f.calls.some((c) => c.url.includes('/subject/play?subjectId=1&') && !c.headers.authorization), 'anonymous web token fetched');
-  assert.ok(f.calls.filter((c) => c.url.includes('api3.aoneroom.com')).every((c) => c.headers.authorization === 'Bearer hdr.web.sig'));
+  assert.ok(f.calls.filter((c) => c.url.includes('api3.aoneroom.com/wefeed-mobile-bff/subject-api/')).every((c) => c.headers.authorization === 'Bearer hdr.web.sig'));
 });
 
 test('mavonyx deviation: app API refuses the web token -> web search finds the title, web streams play (MP4)', async () => {
@@ -351,4 +357,21 @@ test('mavonyx diagnose (Settings -> Test connection) names the failing step', as
   assert.deepEqual(await d({ region: true }), { ok: false, text: 'refused: not available in this region (403)' });
   assert.deepEqual(await d({ hideAppToken: true, webDown: true }), { ok: false, text: 'app API refused (401); web API unavailable' });
   assert.deepEqual(await mx.diagnose(makeCtx(direct(async () => { throw new TypeError('Failed to fetch'); }), mx)), { ok: false, text: 'unreachable' });
+});
+
+test('mavonyx deviation: app token hidden on apig but issued by the app API host -> full app-API results, no web token', async () => {
+  const normal = await mx.lookup(META.movie, makeCtx(direct(upstream()), mx));
+  const f = upstream({ hideAppToken: true, api3IssuesToken: true });
+  const port = await mx.lookup(META.movie, makeCtx(direct(f), mx));
+  assert.deepEqual(port.map((c) => c.url), normal.map((c) => c.url));
+  assert.ok(f.calls.some((c) => c.url.startsWith('https://api3.aoneroom.com/wefeed-mobile-bff/tab/ranking-list')));
+  assert.ok(!f.calls.some((c) => c.url.includes('/subject/play?subjectId=1&')), 'web token not needed');
+  assert.deepEqual(await mx.diagnose(makeCtx(direct(upstream({ hideAppToken: true, api3IssuesToken: true })), mx)), { ok: true, text: 'reachable (token via app host)' });
+});
+
+test('mavonyx: once the app API refuses the web token, the lookup stops asking it (no refresh storm)', async () => {
+  const f = upstream({ hideAppToken: true });
+  await mx.lookup(META.movie, makeCtx(direct(f), mx));
+  const app = f.calls.filter((c) => c.url.startsWith('https://api3.aoneroom.com/wefeed-mobile-bff/subject-api/'));
+  assert.ok(app.length <= 2, `app API calls after the refusal: ${app.length}`);
 });

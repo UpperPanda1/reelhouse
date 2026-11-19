@@ -83,7 +83,8 @@ function mockMavonyxApi(page, { mp4Url, expose = true }) {
       seen.push(`${r.method()} ${u.pathname} ${ok ? 'signed' : 'BAD-SIGNATURE'} ${h.authorization ? 'auth' : 'no-auth'} ua:${/inmoviebox|mbox|Cronet/.test(h['user-agent'] || '') ? 'spoofed' : 'browser'}`);
       if (!ok) return json(403, { code: 403, message: 'bad signature' }), true;
     } else seen.push(`${r.method()} h5 ${u.pathname} ${h.authorization ? 'auth' : 'no-auth'}`);
-    if (u.pathname.endsWith('/tab/ranking-list')) return json(200, { code: 0 }, { 'x-user': JSON.stringify({ token: 'hdr.e2e.sig' }) }), true;
+    // like the owner's browser showed: the token comes from apig only (hidden there); the app host does not issue one
+    if (u.pathname.endsWith('/tab/ranking-list')) return (u.hostname === 'apig.inmoviebox.com' ? json(200, { code: 0 }, { 'x-user': JSON.stringify({ token: 'hdr.e2e.sig' }) }) : json(404, {})), true;
     if (u.hostname === 'api3.aoneroom.com' && !['Bearer hdr.e2e.sig', 'Bearer hdr.web.sig'].includes(h.authorization)) return json(401, { code: 401 }), true;
     const webTok = { 'x-user': JSON.stringify({ token: 'hdr.web.sig', appType: 3 }) };
     if (u.pathname === '/wefeed-h5api-bff/subject/search') {

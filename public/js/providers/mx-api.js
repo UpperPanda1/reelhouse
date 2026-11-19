@@ -212,7 +212,12 @@ function session(ctx) {
     try { const res = await signed('GET', endpoints.token, null, false); const t = res && parseTokenHeader(res.headers.get('x-user')); if (t) s.token = t; } catch (e) { unlessAbort(null)(e); }
     // DEVIATION: apig.inmoviebox.com sends no access-control-expose-headers (measured 19 Nov 2026), so a page cannot
     // read its x-user header. The web API exposes it and hands out anonymous tokens: take one from there.
-    if (!s.token) { s.webToken = true; s.token = await webToken(); }
+    // DEVIATION, step 2: the same request to the app API host, whose replies expose every header (the original reads
+    // x-user from any reply). Unverified live: the host refuses the build machine's region before answering.
+    if (!s.token) {
+      try { const res = await signed('GET', endpoints.mobile + endpoints.token.slice(endpoints.token.indexOf('/wefeed')), null, false); const t = res && parseTokenHeader(res.headers.get('x-user')); if (t) { s.token = t; s.source = 'app host'; } } catch (e) { unlessAbort(null)(e); }
+    }
+    if (!s.token) { s.webToken = true; s.token = await webToken(); if (s.token) s.source = 'web API'; }
     return s.token;
   }
   async function webToken() {
@@ -226,6 +231,8 @@ function session(ctx) {
     return s.pending;
   }
   async function mobile(method, pathAndQuery, body) {
+    // the app API already refused the web API's token in this lookup: do not ask (and refresh) again for every call
+    if (s.refused) return null;
     const url = endpoints.mobile + pathAndQuery;
     const before = s.token;
     try {
@@ -233,6 +240,7 @@ function session(ctx) {
       if (res && (res.status === 401 || res.status === 441)) {
         if (!s.token || s.token === before) await ensureToken(true);
         res = await signed(method, url, body, true);
+        if (res && (res.status === 401 || res.status === 441) && s.webToken) s.refused = true;
       }
       return res && res.status > 0 && res.status < 500 ? res : null;
     } catch (e) { return unlessAbort(null)(e); }
@@ -534,9 +542,9 @@ export async function diagnose(ctx) {
   if (!tokRes) return { ok: false, text: 'unreachable' };
   if (tokRes.status === 403) return { ok: false, text: 'refused: not available in this region (403)' };
   const appToken = !!parseTokenHeader(tokRes.headers.get('x-user'));
-  if (!appToken) { api.s.token = ''; api.s.pending = null; }
+  if (!appToken) { api.s.token = ''; api.s.pending = null; api.s.webToken = false; }
   await api.ensureToken(false); // falls back to the web API's token when the app token header is hidden
-  const tokenNote = appToken ? '' : api.s.token ? ' (token via web API)' : '';
+  const tokenNote = appToken ? '' : api.s.token ? ` (token via ${api.s.source})` : ' (no token readable)';
   const search = await api.signed('POST', endpoints.mobile + '/wefeed-mobile-bff/subject-api/search/v2', JSON.stringify({ page: 1, perPage: 1, keyword: 'Inception', restrictKid: 0 }), true);
   if (search && search.status === 200) return { ok: true, text: 'reachable' + tokenNote };
   const web = await searchWeb(ctx, api, 'Inception');
