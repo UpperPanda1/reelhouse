@@ -4,13 +4,13 @@
 
 ## Status
 
-* Built and tested: 144 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
+* Built and tested: 148 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
 * **Connection and playback fixes (Nov 19, 2026)**, from the owner's report "Fendrix: 1 found but never plays; Hexion and BDIX unreachable" and live checks against the deployment (`VERIFICATION.md` section 18):
   * *Endless spinner*: the player's watchdog was armed only after the first `canplay`, and hls.js failures were never reported. Without built-in HLS (Firefox, older Chrome) Fendrix's CDN refuses hls.js (it 404s any foreign `Origin`), so the page spun forever. Now the player gives up in about a second and explains (built-in HLS, gateway or external player).
   * *FlixHub is a BDIX server* (original: "FlixHub FTP: BDIX"); it was wrongly sent through the Cloudflare edge proxy (504). Now it is treated like DhakaFlix and Circle FTP.
   * *Hexion's sites block Cloudflare* (403 "error code: 1106" / bot challenge from the edge). Not fixable from Cloudflare: Hexion needs the gateway on `pages.dev`; the app now says "Hexion: needs gateway" instead of "server error". Through the real gateway Hexion returned 8 streams in 3.4 s.
   * *DhakaFlix / Circle FTP without a gateway*: no code bug; the browser rules (CORS, mixed content) make the gateway necessary on `pages.dev`. The port still matches the original scrapers (golden parity test).
-* Online source **Mavonyx** (MovieBox API, Nov 19, 2026): port of `mavonyx.js` with the same signed requests (HMAC-MD5 `x-tr-signature`, token from the `x-user` header, refresh on 401/441). Straight from the browser, like Fendrix: the API's CORS allows every signed header and exposes `x-user` (measured). It is **region-gated** (403 "Service not available in current region" from the US sandbox; the owner reports lookup and playback working in their browser), so live streams were never seen here. MP4/HLS play in the built-in player; DASH (`.mpd`) is ranked "unlikely to play" until a DASH player is added. Parity test runs the original file in a `vm` against a mock that checks every signature with `node:crypto`; a real-Chromium E2E step proves the preflight, the readable token header and playback. The 29 KB lookup (`mx-api.js`) loads on the first click; the home page only gets a 0.5 KB stub.
+* Online source **Mavonyx** (MovieBox API, Nov 19, 2026): port of `mavonyx.js` with the same signed requests (HMAC-MD5 `x-tr-signature`, token from the `x-user` header, refresh on 401/441). Straight from the browser, like Fendrix. **First live test by the owner: "no match" everywhere.** Cause: the token host `apig.inmoviebox.com` sends no `access-control-expose-headers`, so the page could not read the token and every app-API call failed (the classification then said "no match"). Fixed with a web-API token fallback, a web-search fallback, "server error" when no search answered, and a Mavonyx row in Settings → Test connection that names the failing step. Still unverified live: whether the app API accepts the web token. It is **region-gated** (403 "Service not available in current region" from the US sandbox; the owner reports lookup and playback working in their browser), so live streams were never seen here. MP4/HLS play in the built-in player; DASH (`.mpd`) is ranked "unlikely to play" until a DASH player is added. Parity test runs the original file in a `vm` against a mock that checks every signature with `node:crypto`; a real-Chromium E2E step proves the preflight, the readable token header and playback. The 29 KB lookup (`mx-api.js`) loads on the first click; the home page only gets a 0.5 KB stub.
 * Online sources **Fendrix** and **Hexion** (Nov 2026): ported, checked against the live services from the sandbox (VERIFICATION section 18) and covered by parity tests against the original scraper files. Fendrix plays with built-in HLS (Chrome/Edge 142+, Safari), through the gateway in other browsers (Firefox: HLS playlists rewritten, tested with hls.js), or in an external player; Hexion's link domains rotate (`EDGE_PROXY_HOSTS`).
 * **Accounts, lists, sync** (Nov 2026): invite-only accounts on Cloudflare D1, sign-in, password change, admin page (invites, users), named watch lists, history removal with Undo, and a merge-based sync of history/lists/resume positions/settings between devices. Unit, multi-device browser and real-`workerd`+D1 tests. Deploy steps: README *Accounts*.
 * **Not verified**: Mavonyx against the live API (region-gated from the sandbox: real stream URLs, formats, sign cookies and caption hosts unseen); a live D1 database on Cloudflare (local D1 in workerd only); the real BDIX servers (DhakaFlix, Circle FTP, FlixHub), TMDB and OpenSubtitles were unreachable during development (mocks used); the deployment `raftv.pages.dev` was only read (public GETs), nothing was deployed from a session; Fendrix playback in the owner's own browser; Firefox/Safari; real phones; https `pages.dev` with the gateway. See `VERIFICATION.md` section 14.
@@ -54,7 +54,7 @@ Outside npm: **Node 22+**; **ffmpeg** with libx264/libx265/vpx/aac/ac3/opus for 
 
 ```bash
 npm ci                    # installs everything incl. Chromium and workerd binaries (no other downloads needed)
-npm test                  # 144 tests, ~3 s
+npm test                  # 148 tests, ~3 s
 npm run e2e:media         # once; writes e2e/media/ (git-ignored)
 npm run e2e               # ~4 min; add a word to run matching steps only
 npm run smoke:cf          # ~20 s
@@ -89,7 +89,7 @@ READ FIRST, in this order, before changing anything:
 my task  4. VERIFICATION.md (before touching tests).
 
 SETUP: Node 22+, run `npm ci`, then `npm test` and confirm the baseline before
-you change code (144 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
+you change code (148 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
 (38 steps).
 
 TASK: <one or two sentences: what I want, and why>

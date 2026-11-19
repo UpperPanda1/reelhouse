@@ -68,7 +68,10 @@ function mockMavonyxApi(page, { mp4Url, expose = true }) {
   page.__intercept = (r, u) => {
     if (!MB.test(u.hostname)) return prev ? prev(r, u) : false;
     const origin = r.headers().origin || '*';
-    const cors = { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', ...(expose ? { 'access-control-expose-headers': '*' } : {}) };
+    // live (19 Nov 2026): apig (CloudFront) sends only `allow-origin: *`, so its x-user header is hidden from pages;
+    // api3 and h5-api echo the Origin and expose every header
+    const cors = u.hostname === 'apig.inmoviebox.com' ? { 'access-control-allow-origin': '*' }
+      : { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', ...(expose ? { 'access-control-expose-headers': '*' } : {}) };
     const json = (status, data, extra = {}) => r.respond({ status, contentType: 'application/json', headers: { ...cors, ...extra }, body: JSON.stringify(data) });
     if (r.method() === 'OPTIONS') {
       seen.push('OPTIONS ' + u.hostname);
@@ -81,7 +84,11 @@ function mockMavonyxApi(page, { mp4Url, expose = true }) {
       if (!ok) return json(403, { code: 403, message: 'bad signature' }), true;
     } else seen.push(`${r.method()} h5 ${u.pathname} ${h.authorization ? 'auth' : 'no-auth'}`);
     if (u.pathname.endsWith('/tab/ranking-list')) return json(200, { code: 0 }, { 'x-user': JSON.stringify({ token: 'hdr.e2e.sig' }) }), true;
-    if (u.hostname === 'api3.aoneroom.com' && h.authorization !== 'Bearer hdr.e2e.sig') return json(401, { code: 401 }), true;
+    if (u.hostname === 'api3.aoneroom.com' && !['Bearer hdr.e2e.sig', 'Bearer hdr.web.sig'].includes(h.authorization)) return json(401, { code: 401 }), true;
+    const webTok = { 'x-user': JSON.stringify({ token: 'hdr.web.sig', appType: 3 }) };
+    if (u.pathname === '/wefeed-h5api-bff/subject/search') {
+      return json(200, h.authorization ? { code: 0, data: { items: [{ subjectId: '603', title: 'The Matrix', releaseDate: '1999-03-31', imdbRatingValue: '8.7', subjectType: 1, detailPath: 'the-matrix-x1', dubs: [] }] } } : { code: 400, message: 'invalid token' }, webTok), true;
+    }
     if (u.pathname.endsWith('/search/v2')) return json(200, { code: 0, data: { results: [{ subjects: [{ subjectId: '603', title: 'The Matrix', releaseDate: '1999-03-31', imdbRatingValue: '8.7', subjectType: 1 }] }] } }), true;
     if (u.pathname.endsWith('/subject-api/get')) return json(200, { code: 0, data: { detailPath: 'the-matrix-x1', dubs: [] } }), true;
     if (u.pathname.endsWith('/play-info')) {
@@ -89,7 +96,7 @@ function mockMavonyxApi(page, { mp4Url, expose = true }) {
       return json(200, { code: 0, data: { streams: [{ id: 'd1', format: 'DASH', url: 'https://cdn.moviebox.test/raw', resolutions: '2160', signCookie: cookie }] } }), true;
     }
     if (u.pathname.endsWith('/captions') || u.pathname.endsWith('-captions')) return json(200, { code: 0, data: { extCaptions: [] } }), true;
-    if (u.pathname === '/wefeed-h5api-bff/subject/play') return json(200, { code: 0, data: { streams: h.authorization ? [{ id: 'w1', url: mp4Url, resolutions: '1080' }] : [] } }), true;
+    if (u.pathname === '/wefeed-h5api-bff/subject/play') return json(200, { code: 0, data: { streams: h.authorization && u.searchParams.get('subjectId') === '603' ? [{ id: 'w1', url: mp4Url, resolutions: '1080' }] : [] } }, webTok), true;
     return json(404, {}), true;
   };
   return seen;
@@ -280,7 +287,7 @@ export async function steps4(ctx) {
     } finally { app.sources.hexion = false; await page.close(); }
   });
 
-  await step('mavonyx: signed MovieBox lookup straight from the browser (preflight, readable token header), web MP4 plays, DASH ranked unplayable', async () => {
+  await step('mavonyx: signed MovieBox lookup straight from the browser (preflights; apig hides its token header, the web token is used), MP4 plays, DASH ranked unplayable, Test connection row', async () => {
     const page = await b.newPage({ width: 1280, height: 800, label: 'mavonyx' });
     const seen = mockMavonyxApi(page, { mp4Url: bdix.base + '/media/test.mp4' });
     const prev = page.__intercept;
@@ -297,7 +304,9 @@ export async function steps4(ctx) {
       assert.equal(v.src, bdix.base + '/media/test.mp4', 'the web API’s MP4, played straight from its host');
       assert.equal(v.w, 640); assert.ok(v.audio > 0, 'sound is decoded');
       assert.ok(!seen.some((x) => /BAD-SIGNATURE/.test(x)), 'Chromium sent every signed request unchanged: ' + seen.join(' | '));
-      assert.ok(seen.includes('POST /wefeed-mobile-bff/subject-api/search/v2 signed auth ua:browser'), 'search signed, with the token read from the x-user response header');
+      assert.ok(seen.includes('POST /wefeed-mobile-bff/subject-api/search/v2 signed auth ua:browser'), 'search signed and authorised');
+      // Chromium really hid apig's x-user (no expose-headers there), so the page took the web API's token
+      assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play no-auth'), 'anonymous web token fetched: ' + seen.join(' | '));
       assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play auth'), 'web API called with the token');
       assert.ok(seen.includes('OPTIONS api3.aoneroom.com') && seen.includes('OPTIONS apig.inmoviebox.com'), 'CORS preflights were made, and answered here (not by the internet)');
       assert.ok(!seen.some((x) => x.startsWith('GATEWAY')), 'never routed through the gateway');
@@ -310,6 +319,17 @@ export async function steps4(ctx) {
       assert.equal(t[0].level, 'ok'); assert.match(t[0].text, /1080p/);
       assert.equal(t[1].level, 'bad', 'the 2160p DASH stream ranks last'); assert.match(t[1].text, /DASH/);
       await shot(page, 'mavonyx-sources');
+      // Settings -> Test connection runs the real first steps and says which one fails
+      await page.keyboard.press('Escape');
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent('rh:settings')));
+      await waitFor(() => page.evaluate(() => [...document.querySelectorAll('dialog[open] button')].some((x) => /Test connection/.test(x.textContent))), { what: 'settings' });
+      // the other rows go to this step's deliberately dead gateway (aborted here): those failures are expected
+      page.__ignoreErrors = /^Failed to load resource: net::ERR_FAILED$/;
+      await page.evaluate(() => [...document.querySelectorAll('dialog[open] button')].find((x) => /Test connection/.test(x.textContent)).click());
+      await waitFor(() => page.$('[data-host="Mavonyx"][data-state]'), { what: 'Mavonyx diagnostic' });
+      assert.equal(await text(page, '[data-host="Mavonyx"] span:last-child'), 'reachable (token via web API)');
+      await page.evaluate(() => document.querySelector('[data-host="Mavonyx"]').scrollIntoView({ block: 'center' }));
+      await shot(page, 'mavonyx-test-connection');
       assert.deepEqual(await b.cspViolations(page), []);
     } finally { await page.close(); }
     // control: without `expose-headers` the browser hides x-user, the API refuses the unauthenticated calls, nothing is found
@@ -322,8 +342,9 @@ export async function steps4(ctx) {
       await page2.evaluate((st) => localStorage.setItem('rh:settings', st), ONLY('mavonyx'));
       await page2.evaluate(() => { location.hash = '#/watch/movie/603'; });
       await waitFor(() => page2.$('.pstat .chip[data-provider="mavonyx"]:not([data-state="start"])'), { what: 'mavonyx chip' });
-      assert.equal(await text(page2, '.pstat .chip[data-provider="mavonyx"]'), 'Mavonyx: no match'); // the token request itself succeeded
-      assert.ok(seen2.some((x) => /search\/v2 signed no-auth/.test(x)), 'token not readable, so sent without it: ' + seen2.join(' | '));
+      // no readable token anywhere: app search refused, web search refused -> an error, not "no match"
+      assert.equal(await text(page2, '.pstat .chip[data-provider="mavonyx"]'), 'Mavonyx: server error');
+      assert.ok(seen2.some((x) => /search\/v2 signed no-auth/.test(x)) && seen2.includes('POST h5 /wefeed-h5api-bff/subject/search no-auth'), 'no token readable, so sent without it: ' + seen2.join(' | '));
       // the "No sources found" message must not spill out of the 16:9 stage over the title bar (phone)
       const fit = await page2.evaluate(() => { const l = document.querySelector('.stage .loading'); const st = document.querySelector('.stage').getBoundingClientRect(); const r = l.getBoundingClientRect(); return { over: l.scrollHeight - l.clientHeight, top: r.top - st.top, bottom: st.bottom - r.bottom }; });
       assert.ok(fit.over <= 1 && fit.top >= 0 && fit.bottom >= 0, `message fits the stage: ${JSON.stringify(fit)}`);

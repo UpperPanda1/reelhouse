@@ -210,7 +210,16 @@ function session(ctx) {
   }
   async function requestToken() {
     try { const res = await signed('GET', endpoints.token, null, false); const t = res && parseTokenHeader(res.headers.get('x-user')); if (t) s.token = t; } catch (e) { unlessAbort(null)(e); }
+    // DEVIATION: apig.inmoviebox.com sends no access-control-expose-headers (measured 19 Nov 2026), so a page cannot
+    // read its x-user header. The web API exposes it and hands out anonymous tokens: take one from there.
+    if (!s.token) { s.webToken = true; s.token = await webToken(); }
     return s.token;
+  }
+  async function webToken() {
+    try {
+      const res = await ctx.response(`${endpoints.web}/wefeed-h5api-bff/subject/play?subjectId=1&se=0&ep=0`, { headers: { Accept: 'application/json' } });
+      return (res && parseTokenHeader(res.headers.get('x-user'))) || '';
+    } catch (e) { return unlessAbort('')(e); }
   }
   function ensureToken(force) {
     if (force || !s.pending) s.pending = requestToken();
@@ -233,7 +242,7 @@ function session(ctx) {
     if (!res || res.status !== 200) return null;
     try { return await res.json(); } catch (e) { return unlessAbort(null)(e); }
   }
-  return { s, ensureToken, mobileJson };
+  return { s, ensureToken, mobileJson, signed };
 }
 
 // ---------------------------------------------------------------- matching (as the original) ----
@@ -281,23 +290,50 @@ function scoreSearchResult(r, md) {
   return scoreTitleMatch(rawTitle, md.titles) + scoreYearMatch(md.year, r.releaseDate) + scoreRatingMatch(md.rating, r.imdbRatingValue)
     + (md.isTv === resultIsTv ? 15 : -30) + (rawTitle.includes('[') ? 0 : 2);
 }
+const usable = (x) => x && x.subjectId != null && x.title;
+/** App-API search. null = no usable reply (refused, unreachable), [] = answered with nothing. */
 async function searchCatalog(api, keyword) {
   const json = await api.mobileJson('POST', '/wefeed-mobile-bff/subject-api/search/v2', { page: 1, perPage: 20, keyword, restrictKid: 0 });
   const groups = json && json.data && json.data.results;
-  if (!Array.isArray(groups)) return [];
-  return groups.flatMap((g) => (g && Array.isArray(g.subjects) ? g.subjects.filter((x) => x && x.subjectId != null && x.title) : []));
+  if (!Array.isArray(groups)) return null;
+  return groups.flatMap((g) => (g && Array.isArray(g.subjects) ? g.subjects.filter(usable) : []));
 }
-async function findMatchingSubjectId(api, md) {
-  const queries = [md.titles[0]];
-  if (md.titles[1] && normalizeTitle(md.titles[1]) !== normalizeTitle(md.titles[0])) queries.push(md.titles[1]);
-  const lists = await Promise.all(queries.map((k) => searchCatalog(api, k)));
+/** DEVIATION: web-API search (h5-api, CORS with exposed headers; same item fields as the app API: subjectId, title,
+ *  releaseDate, imdbRatingValue, subjectType, detailPath, dubs). Used only when the app API's search gave no usable reply. */
+async function searchWeb(ctx, api, keyword) {
+  const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
+  if (api.s.token) headers.Authorization = 'Bearer ' + api.s.token;
+  try {
+    const res = await ctx.response(`${endpoints.web}/wefeed-h5api-bff/subject/search`, { method: 'POST', headers, body: JSON.stringify({ keyword, page: 1, perPage: 20, subjectType: 0 }) });
+    if (!res || res.status !== 200) return null;
+    const json = await res.json();
+    const items = json && json.data && json.data.items;
+    return Array.isArray(items) ? items.filter(usable) : null;
+  } catch (e) { return unlessAbort(null)(e); }
+}
+const pickBest = (lists, md) => {
   for (const list of lists) {
     let best = null;
     let bestScore = -Infinity;
-    for (const r of list) { const sc = scoreSearchResult(r, md); if (sc > bestScore) { bestScore = sc; best = r; } }
-    if (best && bestScore >= 40) return String(best.subjectId);
+    for (const r of list || []) { const sc = scoreSearchResult(r, md); if (sc > bestScore) { bestScore = sc; best = r; } }
+    if (best && bestScore >= 40) return best;
   }
   return null;
+};
+/** @returns {{subjectId: string, item: object|null}|null}; throws when no search could be done at all. */
+async function findMatchingSubject(ctx, api, md) {
+  const queries = [md.titles[0]];
+  if (md.titles[1] && normalizeTitle(md.titles[1]) !== normalizeTitle(md.titles[0])) queries.push(md.titles[1]);
+  const lists = await Promise.all(queries.map((k) => searchCatalog(api, k)));
+  if (lists.some(Boolean)) { const best = pickBest(lists, md); return best ? { subjectId: String(best.subjectId), item: null } : null; }
+  const web = await Promise.all(queries.map((k) => searchWeb(ctx, api, k)));
+  // "no match" only when a search really answered; otherwise the provider reports an error
+  if (!web.some(Boolean)) {
+    if (ctx.network === ctx.attempts) return null; // all offline: classify() reports "unreachable"
+    throw new Error('Mavonyx: no search answered (app API refused, web API unavailable)');
+  }
+  const best = pickBest(web, md);
+  return best ? { subjectId: String(best.subjectId), item: best } : null;
 }
 
 // ---------------------------------------------------------------- streams (as the original) ----
@@ -475,9 +511,11 @@ export async function lookup(meta, ctx) {
   if (!q) return [];
   const api = session(ctx);
   await api.ensureToken(false);
-  const subjectId = await findMatchingSubjectId(api, q.md);
-  if (!subjectId) return [];
-  const subject = await fetchSubjectDetail(api, subjectId);
+  const match = await findMatchingSubject(ctx, api, q.md);
+  if (!match) return [];
+  const { subjectId } = match;
+  // the web search item carries the same dubs/detailPath when the app API refuses the detail call
+  const subject = (await fetchSubjectDetail(api, subjectId)) || match.item;
   if (!subject) return [];
   const tracks = extractAudioTracks(subject, subjectId).filter(isTrackEnabled);
   if (!tracks.length) return [];
@@ -487,6 +525,24 @@ export async function lookup(meta, ctx) {
   const unique = results.flat().filter((c) => (seen.has(c.url) ? false : (seen.add(c.url), true)));
   // Array.prototype.sort is stable: ties keep discovery order, like the original's index tie-break
   return unique.sort((a, b) => (RESOLUTION_RANK[b.resolution] || 0) - (RESOLUTION_RANK[a.resolution] || 0));
+}
+
+/** Settings -> Test connection: runs the real first steps and names the one that fails. {ok, text} */
+export async function diagnose(ctx) {
+  const api = session(ctx);
+  const tokRes = await api.signed('GET', endpoints.token, null, false);
+  if (!tokRes) return { ok: false, text: 'unreachable' };
+  if (tokRes.status === 403) return { ok: false, text: 'refused: not available in this region (403)' };
+  const appToken = !!parseTokenHeader(tokRes.headers.get('x-user'));
+  if (!appToken) { api.s.token = ''; api.s.pending = null; }
+  await api.ensureToken(false); // falls back to the web API's token when the app token header is hidden
+  const tokenNote = appToken ? '' : api.s.token ? ' (token via web API)' : '';
+  const search = await api.signed('POST', endpoints.mobile + '/wefeed-mobile-bff/subject-api/search/v2', JSON.stringify({ page: 1, perPage: 1, keyword: 'Inception', restrictKid: 0 }), true);
+  if (search && search.status === 200) return { ok: true, text: 'reachable' + tokenNote };
+  const web = await searchWeb(ctx, api, 'Inception');
+  const why = !search ? 'unreachable' : search.status === 403 ? 'not available in this region' : `refused (${search.status})`;
+  if (web) return { ok: true, text: `web API only: app API ${why}` + tokenNote };
+  return { ok: false, text: `app API ${why}; web API unavailable` };
 }
 
 /** What the original returns for a candidate (minus its invisible sort prefix). Used by the parity test. */

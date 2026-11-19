@@ -2,7 +2,7 @@ import { h, mount } from '../util.js';
 import { store } from '../store.js';
 import { net } from '../core.js';
 import { api } from '../api.js';
-import { PROVIDERS } from '../providers/index.js';
+import { PROVIDERS, makeCtx } from '../providers/index.js';
 import { SERVERS } from '../providers/df.js';
 import { endpoints as cfEndpoints } from '../providers/cf.js';
 import { endpoints as fhEndpoints } from '../providers/fh.js';
@@ -41,14 +41,20 @@ export function openSettings() {
         ['FlixHub', fhEndpoints.base + '/', null],
         ['Fendrix', fendrix.API_BASE[0] + '/', fendrix],
         ['Hexion', hexion.endpoints.base + '/', hexion],
+        ['Mavonyx', null, null],
       ];
       mount(diag, targets.map(([name]) => h('div', { dataset: { host: name } }, h('span', null, name), h('span', null, 'testing\u2026'))));
       await Promise.all(targets.map(async ([name, url, provider], i) => {
         let state;
-        if (name === 'Gateway') { try { const r = await fetch(url); state = r.ok ? 'ok' : 'unreachable'; } catch { state = 'unreachable'; } } else if (provider && (provider.direct || !gwOn)) {
+        let custom = null;
+        if (name === 'Mavonyx') {
+          // the real first steps (signed token + search), so the row says which one fails (mx-api.js diagnose)
+          try { const m = await import('../providers/mx-api.js'); custom = await m.diagnose(makeCtx(net, m)); } catch { custom = { ok: false, text: 'unreachable' }; }
+          state = custom.ok ? 'ok' : 'unreachable';
+        } else if (name === 'Gateway') { try { const r = await fetch(url); state = r.ok ? 'ok' : 'unreachable'; } catch { state = 'unreachable'; } } else if (provider && (provider.direct || !gwOn)) {
           try { const r = await net.request(url, { provider, timeoutMs: 8000 }); state = r.ok ? 'ok' : 'unreachable'; } catch { state = 'unreachable'; }
         } else state = await net.diagnose(url);
-        const [text, cls] = DIAG_TEXT[state];
+        const [text, cls] = custom ? [custom.text, custom.ok ? 'ok' : 'bad'] : DIAG_TEXT[state];
         const row = diag.children[i];
         row.replaceChildren(h('span', null, name), h('span', { class: cls === 'ok' ? 'pstat ok' : 'pstat bad', style: { margin: 0 } }, text));
         row.dataset.state = state;

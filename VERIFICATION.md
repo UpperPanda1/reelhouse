@@ -156,7 +156,7 @@ The golden file is data recorded from the GPL-3.0 originals (see `NOTICE.md`). R
 | 28 | Fendrix without built-in HLS, no gateway (the reported bug) | watch page: hls.js is refused by the CDN, the player stops spinning and says so (`.rh-fail`), the banner gives the reason (built-in HLS or gateway) and the external-player `.m3u`, all within 12 s (measured < 1 s); phone width has no overflow |
 | 29 | Hexion | 4kHdHub chain (search, wrapper, HubCloud, file page) through the edge proxy; one ticket "Hexion (FSL)" with size tag, interstitial link ignored; nothing downloaded during lookup; plays from the file host (HTTP cache off: edge replies are cacheable) |
 | 30 | Hexion blocked at the edge | the mock site answers like the live one does to Cloudflare (403 "error code: 1106"): chip "Hexion: needs gateway", notice "This source needs the gateway here" with the gateway hint |
-| 31 | Mavonyx | gateway configured but unused; the MovieBox hosts are answered in the browser with the live CORS shape (Origin echoed, requested headers allowed, `expose-headers: *`); CORS preflights made and answered locally; every signed request verified with `node:crypto` (Chromium sends Accept/Content-Type unchanged and its own User-Agent); token read from `x-user` and sent; web API MP4 plays with sound; Sources sheet: "Mavonyx: 2 found", MP4 recommended, 2160p DASH "Unlikely to play here" with the DASH and cookie reasons; no BDIX lookups; no CSP violations. Control on a phone: without `expose-headers` the token stays hidden, the search goes out unauthenticated, nothing is found |
+| 31 | Mavonyx | gateway configured but unused; the MovieBox hosts are answered in the browser with the live CORS shapes (`api3`/`h5-api`: Origin echoed, requested headers allowed, `expose-headers: *`; `apig`: only `allow-origin: *`, so Chromium hides its token header and the page takes the web API's token); CORS preflights made and answered locally; every signed request verified with `node:crypto` (Chromium sends Accept/Content-Type unchanged and its own User-Agent); token read from `x-user` and sent; web API MP4 plays with sound; Sources sheet: "Mavonyx: 2 found", MP4 recommended, 2160p DASH "Unlikely to play here" with the DASH and cookie reasons; no BDIX lookups; no CSP violations. Settings → Test connection: Mavonyx row "reachable (token via web API)". Control on a phone: no readable token anywhere, app and web search both refused, chip "Mavonyx: server error"; the message fits the stage |
 | 32 | online + BDIX down | BDIX guidance shown, plus the hint that the online sources did not answer either |
 | 33 | history | remove from Continue watching, Undo restores in place, removal saved; History page: remove, Clear (Cancel keeps, confirm empties; count is current) |
 | 34 | lists | save sheet: switch per list, create list (duplicate name refused inline), saved state; Lists page: rename, remove with Undo, My List undeletable, delete with confirmation; list rails on home; phone without overflow |
@@ -208,6 +208,7 @@ Procedure: edit the code to re-introduce the bug, run `npm test`, confirm exactl
 | Accounts (16 mutations: Origin check, JSON check, admin role, disabled/used/expired invites, session revocation on password change, bootstrap when an admin exists, reserved admin name, login rate limit, session expiry, sliding expiry, self-removal, cross-user sync read, optimistic concurrency, normalization, Secure cookie) | `test/accounts.test.mjs` (3 were first missed and got tests) |
 | Sync engine (conflict not merged, sign-out keeps data, 401 ignored, apply guard removed) | `test/account-sync.test.mjs` (2 were first missed and got tests) |
 | Mavonyx: query not sorted / HMAC inner pad 55 / body length in characters / no token refresh / no DASH-first order / `User-Agent` sent / no original-title search / mobile MP4 kept | `mavonyx parity ...` (and the helper, token, header and scenario tests) |
+| Mavonyx: no web-token fallback / no web-search fallback / no error when nothing answered / web item not used as the subject | the hidden-token, web-search, "no match only when answered" and diagnose tests |
 | Mavonyx track stage swallows `AbortError` | `mavonyx: cancelling while the stream lists are loading ...` (first survived: the cancel test aborted at the token request; this test was added) |
 | Wait for every endpoint (`Promise.all`) again | `fendrix: a hanging fallback endpoint does not hold back ...` |
 | Player watchdog armed on ArtPlayer `ready` again / fatal hls.js errors not reported (each alone) | E2E step 28 (`fendrix without built-in HLS and no gateway ...`) |
@@ -269,7 +270,7 @@ Test-side mistakes (not product bugs) were also found and corrected, e.g. a taut
 
 | Suite | Result |
 |---|---|
-| `npm test` | 144 tests pass |
+| `npm test` | 148 tests pass |
 | `npm run e2e` | 38 steps pass; no browser console errors (steps 26-28 allow exactly the fallback endpoint's CORS error, and step 28 the CDN's refusal of hls.js, which is the case under test); no CSP violations |
 | `npm run smoke:cf` | 9 checks pass |
 | `npm run check:docs` | passes |
@@ -368,6 +369,8 @@ Done by hand from the sandbox, not part of any test (tests never reach the inter
 | `h5-api.aoneroom.com` `/wefeed-h5api-bff/subject/play` | 200, `x-user` token header; `/subject/search` with that token finds Inception; `play` for it: `streams: []`, `hasResource: false`, `maxResolution: 480` |
 | Preflight to `api3.aoneroom.com` and `h5-api.aoneroom.com`, Origin `https://raftv.pages.dev`, all signed headers requested | 200, that Origin echoed, every requested header allowed, `expose-headers: *`, `allow-credentials: true`, max-age 86400 |
 | `mavonyx.js` vs the copy in the plugin's assets | identical |
+| Preflight + GET to `apig.inmoviebox.com` with Origin `https://raftv.pages.dev` (checked after the owner saw "no match") | preflight: `allow-origin: *`, `allow-headers: *`, methods GET; response: `allow-origin: *` and **no `expose-headers`**: the `x-user` token is invisible to a page (the earlier check covered only `api3` and `h5-api`) |
+| Web API search items (Breaking Bad, Pathaan) | same fields as the app API's (`subjectId`, `subjectType`, `title`, `releaseDate`, `imdbRatingValue`, `detailPath`, `dubs`); TV listed per season under one `subjectId` |
 
 ## 19. Accounts in the real Cloudflare runtime
 
