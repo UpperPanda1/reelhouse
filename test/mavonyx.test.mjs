@@ -94,7 +94,9 @@ const CAPTIONS = {
 
 /** Live-shaped MovieBox upstream. `expire`: the first token is refused once (401) to exercise the refresh path.
  *  `region`: every mobile API host answers like it does outside its regions (403). */
-function upstream({ expire = false, region = false } = {}) {
+/*  `hideAppToken`: apig's x-user cannot be read (live in a browser: apig sends no access-control-expose-headers).
+ *  `acceptWebToken`: the app API accepts the web API's anonymous token. `webDown`: the web API answers 503. */
+function upstream({ expire = false, region = false, hideAppToken = false, acceptWebToken = false, webDown = false } = {}) {
   const calls = [];
   let issued = 0;
   let refused = false;
@@ -113,11 +115,11 @@ function upstream({ expire = false, region = false } = {}) {
     if (mobile && !signatureOk(method, url, h, body)) return json(403, { code: 403, message: 'bad signature' });
     if (u.host === 'apig.inmoviebox.com' && u.pathname === '/wefeed-mobile-bff/tab/ranking-list') {
       issued++;
-      return json(200, { code: 0, data: {} }, { 'x-user': JSON.stringify({ token: `hdr.tok${issued}.sig`, userType: 0 }) });
+      return json(200, { code: 0, data: {} }, hideAppToken ? {} : { 'x-user': JSON.stringify({ token: `hdr.tok${issued}.sig`, userType: 0 }) });
     }
     if (u.host === 'api3.aoneroom.com') {
       const auth = h.get('authorization') || '';
-      if (!/^Bearer hdr\.tok\d+\.sig$/.test(auth)) return json(401, { code: 401 });
+      if (!/^Bearer hdr\.tok\d+\.sig$/.test(auth) && !(acceptWebToken && auth === 'Bearer hdr.web.sig')) return json(401, { code: 401 });
       if (expire && !refused && auth === 'Bearer hdr.tok1.sig') { refused = true; return json(401, { code: 401, message: 'token expired' }); }
       const p = u.pathname;
       const q = u.searchParams;
@@ -131,9 +133,17 @@ function upstream({ expire = false, region = false } = {}) {
       if (p === '/wefeed-mobile-bff/subject-api/get-ext-captions') return json(200, { code: 0, data: { extCaptions: CAPTIONS[`ext|${q.get('subjectId')}|${q.get('resourceId')}`] || [] } });
       return json(404, {});
     }
+    if (u.host === 'h5-api.aoneroom.com' && webDown) return json(503, { code: 503 });
+    const webTok = { 'x-user': JSON.stringify({ token: 'hdr.web.sig', appType: 3 }) }; // live: every web reply carries one
     if (u.host === 'h5-api.aoneroom.com' && u.pathname === '/wefeed-h5api-bff/subject/play') {
       const streams = WEB[u.searchParams.get('subjectId')] || [];
-      return json(200, { code: 0, message: 'ok', data: { streams, dash: [], hls: [], hasResource: streams.length > 0 } });
+      return json(200, { code: 0, message: 'ok', data: { streams, dash: [], hls: [], hasResource: streams.length > 0 } }, webTok);
+    }
+    if (u.host === 'h5-api.aoneroom.com' && u.pathname === '/wefeed-h5api-bff/subject/search' && method === 'POST') {
+      if (!h.get('authorization')) return json(200, { code: 400, reason: 'PARAMS_ERROR', message: 'invalid token' });
+      const { keyword } = JSON.parse(body);
+      const items = (SUBJECTS[keyword] || []).map((x) => ({ ...x, detailPath: (DETAIL[x.subjectId] && DETAIL[x.subjectId].detailPath) || `${x.title.toLowerCase().replace(/\W+/g, '-')}-w`, dubs: (DETAIL[x.subjectId] && DETAIL[x.subjectId].dubs) || [] }));
+      return json(200, { code: 0, message: 'ok', data: { items } }, webTok);
     }
     return new Response('404 page not found', { status: 404 });
   };
@@ -195,10 +205,10 @@ test('mavonyx: an expired token is refreshed once and the request repeated, like
   assert.ok(portCalls.filter((c) => c.url.includes('ranking-list')).length >= 2, 'token requested again');
 });
 
-test('mavonyx: outside the API\'s regions (403) nothing is found and the provider reports an error, not a crash', async () => {
-  const f = upstream({ region: true });
+test('mavonyx: app API refused (403 region) and web API down: the provider reports an error, not "no match"', async () => {
+  const f = upstream({ region: true, webDown: true });
   assert.deepEqual(await runReference(f, ARGS.movie), []);
-  const r = await resolveStreams(META.movie, { net: direct(upstream({ region: true })), enabled: Object.fromEntries(PROVIDERS.map((p) => [p.id, p.id === 'mavonyx'])) });
+  const r = await resolveStreams(META.movie, { net: direct(upstream({ region: true, webDown: true })), enabled: Object.fromEntries(PROVIDERS.map((p) => [p.id, p.id === 'mavonyx'])) });
   assert.equal(r.status.mavonyx.state, 'error');
   assert.equal(r.streams.length, 0);
 });
@@ -300,4 +310,45 @@ test('mavonyx parity with non-default settings: audio-track, resolution and subt
     assert.ok(fp.calls.some((c) => /play-info\?subjectId=122\b/.test(c.url)), 'Tamil track requested');
     assert.ok(!fp.calls.some((c) => c.url.includes('captions')), 'no caption requests');
   } finally { for (const k of Object.keys(mx.settings)) delete mx.settings[k]; Object.assign(mx.settings, saved); }
+});
+
+const ONLY_MX = Object.fromEntries(PROVIDERS.map((p) => [p.id, p.id === 'mavonyx']));
+
+test('mavonyx deviation: app token header hidden (live CORS of apig) -> the web API\'s token is used; app API accepts it: same streams', async () => {
+  const normal = await mx.lookup(META.movie, makeCtx(direct(upstream()), mx));
+  const f = upstream({ hideAppToken: true, acceptWebToken: true });
+  const port = await mx.lookup(META.movie, makeCtx(direct(f), mx));
+  assert.deepEqual(port.map((c) => c.url), normal.map((c) => c.url));
+  assert.ok(f.calls.some((c) => c.url.includes('/subject/play?subjectId=1&') && !c.headers.authorization), 'anonymous web token fetched');
+  assert.ok(f.calls.filter((c) => c.url.includes('api3.aoneroom.com')).every((c) => c.headers.authorization === 'Bearer hdr.web.sig'));
+});
+
+test('mavonyx deviation: app API refuses the web token -> web search finds the title, web streams play (MP4)', async () => {
+  const f = upstream({ hideAppToken: true });
+  const port = await mx.lookup(META.movie, makeCtx(direct(f), mx));
+  assert.deepEqual(port.map((c) => [c.url, c.format, c.language]), [['https://web.test/111-1080.mp4', 'MP4', 'English'], ['https://web.test/124.mp4', 'MP4', 'English dub']]);
+  assert.ok(f.calls.some((c) => c.url.endsWith('/wefeed-h5api-bff/subject/search') && c.headers.authorization === 'Bearer hdr.web.sig'));
+  const tv = await mx.lookup(META.tv, makeCtx(direct(upstream({ hideAppToken: true })), mx));
+  assert.deepEqual(tv, [], 'series: web search matched, but no web streams in this mock');
+  const r = await resolveStreams(META.movie, { net: direct(upstream({ hideAppToken: true })), enabled: ONLY_MX });
+  assert.equal(r.status.mavonyx.state, 'ok');
+});
+
+test('mavonyx: "no match" only when a search answered; both refused -> error', async () => {
+  const none = await resolveStreams({ ...META.movie, title: 'Zzz Unknown', originalTitle: '' }, { net: direct(upstream({ hideAppToken: true })), enabled: ONLY_MX });
+  assert.equal(none.status.mavonyx.state, 'empty');
+  const both = await resolveStreams(META.movie, { net: direct(upstream({ hideAppToken: true, webDown: true })), enabled: ONLY_MX });
+  assert.equal(both.status.mavonyx.state, 'error');
+  const offline = await resolveStreams(META.movie, { net: direct(async () => { throw new TypeError('Failed to fetch'); }), enabled: ONLY_MX });
+  assert.equal(offline.status.mavonyx.state, 'unreachable');
+});
+
+test('mavonyx diagnose (Settings -> Test connection) names the failing step', async () => {
+  const d = (o) => mx.diagnose(makeCtx(direct(upstream(o)), mx));
+  assert.deepEqual(await d({}), { ok: true, text: 'reachable' });
+  assert.deepEqual(await d({ hideAppToken: true, acceptWebToken: true }), { ok: true, text: 'reachable (token via web API)' });
+  assert.deepEqual(await d({ hideAppToken: true }), { ok: true, text: 'web API only: app API refused (401) (token via web API)' });
+  assert.deepEqual(await d({ region: true }), { ok: false, text: 'refused: not available in this region (403)' });
+  assert.deepEqual(await d({ hideAppToken: true, webDown: true }), { ok: false, text: 'app API refused (401); web API unavailable' });
+  assert.deepEqual(await mx.diagnose(makeCtx(direct(async () => { throw new TypeError('Failed to fetch'); }), mx)), { ok: false, text: 'unreachable' });
 });
