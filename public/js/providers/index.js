@@ -4,15 +4,16 @@ import * as cf from './cf.js';
 import * as fh from './fh.js';
 import * as fn from './fn.js';
 import * as hx from './hx.js';
+import * as mx from './mx.js';
 
-export const PROVIDERS = [df, cf, fh, fn, hx];
+export const PROVIDERS = [df, cf, fh, fn, hx, mx];
 export const providerById = (id) => PROVIDERS.find((p) => p.id === id);
 
 /** Wraps the transport for one provider and counts what happened, so an empty result can be explained. */
 export function makeCtx(net, provider, signal) {
-  // One request, counted. `read` turns an OK response into the value; failures become null (never thrown),
-  // except AbortError/TimeoutError, which must reach the orchestrator so it can report 'cancelled'/'timeout'.
-  async function fetchOk(url, init, read) {
+  // One counted request. Failures become null, except AbortError/TimeoutError (the orchestrator reports those).
+  // keepErrors: error responses reach `read` too (ctx.response; still counted).
+  async function fetchOk(url, init, read, keepErrors = false) {
     ctx.attempts++;
     try {
       const res = await net.request(url, { ...init, signal, provider });
@@ -20,7 +21,7 @@ export function makeCtx(net, provider, signal) {
         ctx.http++;
         // site refused Cloudflare (lib/api.js blockedByCloudflare)
         if (res.headers && res.headers.get('x-upstream-blocked')) ctx.blocked++;
-        return null;
+        if (!keepErrors) return null;
       }
       return await read(res);
     } catch (e) {
@@ -34,6 +35,7 @@ export function makeCtx(net, provider, signal) {
     text: (url, init = {}) => fetchOk(url, init, (r) => r.text()),
     /** Raw response bytes (Uint8Array). Use for binary payloads: text() would replace invalid UTF-8 with U+FFFD. */
     bytes: (url, init = {}) => fetchOk(url, init, async (r) => new Uint8Array(await r.arrayBuffer())),
+    response: (url, init = {}) => fetchOk(url, init, (r) => r, true),
     async json(url, init = {}) {
       const t = await ctx.text(url, init);
       if (t === null) return null;
@@ -90,7 +92,7 @@ export async function resolveStreams(meta, { net, enabled = {}, signal, onProgre
       else status[p.id] = { state: e && e.name === 'TimeoutError' ? 'timeout' : 'error', count: 0, ms: Date.now() - started };
     } finally {
       clearTimeout(timer);
-      // the provider has answered: requests it left running (e.g. a slower fallback endpoint) are no longer needed
+      // the provider has answered: abort requests it left running (e.g. a slow fallback endpoint)
       if (!ctrl.signal.aborted) ctrl.abort(new DOMException('Provider finished', 'AbortError'));
       signal && signal.removeEventListener('abort', onAbort);
       if (!finalized) onProgress && onProgress(p.id, 'done', status[p.id]);
@@ -104,8 +106,7 @@ export async function resolveStreams(meta, { net, enabled = {}, signal, onProgre
   for (const p of active) {
     if (!status[p.id]) { partial = true; status[p.id] = { state: 'slow', count: 0, ms: 0 }; ctrls.get(p.id).abort(); onProgress && onProgress(p.id, 'done', status[p.id]); }
   }
-  // Same file URL from several providers: keep one entry, preferring the one that knows the resolution
-  // (the order providers finish in is not deterministic, so "first wins" would lose information at random).
+  // Same URL from several providers: keep the entry that knows the resolution (arrival order is random)
   const byUrl = new Map();
   for (const s of all) { const prev = byUrl.get(s.url); if (!prev || s.height > prev.height) byUrl.set(s.url, s); }
   return { streams: [...byUrl.values()], status, partial };

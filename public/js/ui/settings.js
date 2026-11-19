@@ -68,7 +68,7 @@ export function openSettings() {
 
     // ----- sources -----
     const sources = h('section', { class: 'set-group' }, h('h3', null, 'Sources'),
-      ...PROVIDERS.map((p) => toggleRow(p.name, p.group === 'bdix' ? 'BDIX server: needs a BDIX network' : 'Online source: works on any internet connection', s.providers[p.id] !== false, (v) => { store.saveSettings({ providers: { [p.id]: v } }); })),
+      ...PROVIDERS.map((p) => toggleRow(p.name, p.note || (p.group === 'bdix' ? 'BDIX server: needs a BDIX network' : 'Online source: works on any internet connection'), s.providers[p.id] !== false, (v) => { store.saveSettings({ providers: { [p.id]: v } }); })),
       toggleRow('Original file types only', 'Off also lists .mov, .m4v and .webm files from DhakaFlix.', s.compat, (v) => store.saveSettings({ compat: v })));
 
     // ----- playback -----

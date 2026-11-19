@@ -4,10 +4,10 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { webcrypto } from 'node:crypto';
+import { webcrypto, createHash, createHmac } from 'node:crypto';
 import { video, waitPlaying, text, hasText } from './helpers.mjs';
 
-const ONLY = (id) => JSON.stringify({ providers: { 'bdix-df': false, 'bdix-cf': false, 'bdix-fh': false, fendrix: id === 'fendrix', hexion: id === 'hexion' } });
+const ONLY = (id) => JSON.stringify({ providers: { 'bdix-df': false, 'bdix-cf': false, 'bdix-fh': false, fendrix: id === 'fendrix', hexion: id === 'hexion', mavonyx: id === 'mavonyx' } });
 
 /** Local stand-in for the Fendrix CDN: HLS named .jpg, served as image/jpeg, and 404 for ANY request with an Origin header. */
 function startCdn(dir) {
@@ -46,6 +46,52 @@ async function mockFendrixApi(page, playlist, seen = []) {
     return prev ? prev(r, u) : false;
   };
   page.__ignoreErrors = /api\.shegu\.st|^Failed to load resource: net::ERR_FAILED$/;
+  return seen;
+}
+/** Answers the MovieBox API hosts (Mavonyx) in the browser, CORS shaped like the live servers (Nov 2026): the Origin is
+ *  echoed, preflights allow the requested headers, `expose-headers: *`. Every signed request is checked with node:crypto,
+ *  so the step proves what Chromium really sends (unchanged Content-Type/Accept, readable x-user token). */
+function mockMavonyxApi(page, { mp4Url, expose = true }) {
+  const seen = [];
+  const key = Buffer.from(Buffer.from('NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==', 'base64').toString('latin1'), 'base64');
+  const md5 = (x) => createHash('md5').update(x).digest('hex');
+  const signed = (r, u) => {
+    const h = r.headers();
+    const body = r.postData() ?? null;
+    const ts = String(h['x-client-token'] || '').split(',')[0];
+    const q = u.search ? u.search.slice(1).split('&').map((p, i) => { const [k, v = ''] = p.split('='); return { k, v, i }; }).sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : a.i - b.i)) : [];
+    const canon = [r.method(), h.accept, h['content-type'], body == null ? '' : String(Buffer.byteLength(body)), ts, body == null ? '' : md5(body), u.pathname + (q.length ? '?' + q.map((p) => `${p.k}=${p.v}`).join('&') : '')].join('\n');
+    return h['x-client-token'] === `${ts},${md5(ts.split('').reverse().join(''))}` && h['x-tr-signature'] === `${ts}|2|${createHmac('md5', key).update(canon).digest('base64')}`;
+  };
+  const MB = /^(apig\.inmoviebox\.com|api3\.aoneroom\.com|h5-api\.aoneroom\.com)$/;
+  const prev = page.__intercept;
+  page.__intercept = (r, u) => {
+    if (!MB.test(u.hostname)) return prev ? prev(r, u) : false;
+    const origin = r.headers().origin || '*';
+    const cors = { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', ...(expose ? { 'access-control-expose-headers': '*' } : {}) };
+    const json = (status, data, extra = {}) => r.respond({ status, contentType: 'application/json', headers: { ...cors, ...extra }, body: JSON.stringify(data) });
+    if (r.method() === 'OPTIONS') {
+      seen.push('OPTIONS ' + u.hostname);
+      return r.respond({ status: 200, headers: { ...cors, 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-allow-headers': r.headers()['access-control-request-headers'] || '', 'access-control-max-age': '86400' }, body: '' }), true;
+    }
+    const h = r.headers();
+    if (u.hostname !== 'h5-api.aoneroom.com') {
+      const ok = signed(r, u);
+      seen.push(`${r.method()} ${u.pathname} ${ok ? 'signed' : 'BAD-SIGNATURE'} ${h.authorization ? 'auth' : 'no-auth'} ua:${/inmoviebox|mbox|Cronet/.test(h['user-agent'] || '') ? 'spoofed' : 'browser'}`);
+      if (!ok) return json(403, { code: 403, message: 'bad signature' }), true;
+    } else seen.push(`${r.method()} h5 ${u.pathname} ${h.authorization ? 'auth' : 'no-auth'}`);
+    if (u.pathname.endsWith('/tab/ranking-list')) return json(200, { code: 0 }, { 'x-user': JSON.stringify({ token: 'hdr.e2e.sig' }) }), true;
+    if (u.hostname === 'api3.aoneroom.com' && h.authorization !== 'Bearer hdr.e2e.sig') return json(401, { code: 401 }), true;
+    if (u.pathname.endsWith('/search/v2')) return json(200, { code: 0, data: { results: [{ subjects: [{ subjectId: '603', title: 'The Matrix', releaseDate: '1999-03-31', imdbRatingValue: '8.7', subjectType: 1 }] }] } }), true;
+    if (u.pathname.endsWith('/subject-api/get')) return json(200, { code: 0, data: { detailPath: 'the-matrix-x1', dubs: [] } }), true;
+    if (u.pathname.endsWith('/play-info')) {
+      const cookie = `Edge-Cache-Cookie=urlprefix=${Buffer.from('https://cdn.moviebox.test/dash/603/').toString('base64').replace(/\//g, '_').replace(/\+/g, '-')}:Expires=1:KeyName=k:Signature=s`;
+      return json(200, { code: 0, data: { streams: [{ id: 'd1', format: 'DASH', url: 'https://cdn.moviebox.test/raw', resolutions: '2160', signCookie: cookie }] } }), true;
+    }
+    if (u.pathname.endsWith('/captions') || u.pathname.endsWith('-captions')) return json(200, { code: 0, data: { extCaptions: [] } }), true;
+    if (u.pathname === '/wefeed-h5api-bff/subject/play') return json(200, { code: 0, data: { streams: h.authorization ? [{ id: 'w1', url: mp4Url, resolutions: '1080' }] : [] } }), true;
+    return json(404, {}), true;
+  };
   return seen;
 }
 /** Make Chromium report no built-in HLS, like Firefox (the app and the player both decide by canPlayType). */
@@ -234,10 +280,61 @@ export async function steps4(ctx) {
     } finally { app.sources.hexion = false; await page.close(); }
   });
 
+  await step('mavonyx: signed MovieBox lookup straight from the browser (preflight, readable token header), web MP4 plays, DASH ranked unplayable', async () => {
+    const page = await b.newPage({ width: 1280, height: 800, label: 'mavonyx' });
+    const seen = mockMavonyxApi(page, { mp4Url: bdix.base + '/media/test.mp4' });
+    const prev = page.__intercept;
+    page.__intercept = (r, u) => (u.hostname === '127.0.0.1' && u.port === '8787' ? (seen.push('GATEWAY ' + u.pathname), r.abort(), true) : prev(r, u));
+    try {
+      await open(page, '#/movie/603');
+      await waitFor(() => page.$('.dinfo h1'), { what: 'details' });
+      // a gateway is configured, yet Mavonyx must not use it (the API sends CORS headers and is region-gated by IP)
+      await page.evaluate((st) => localStorage.setItem('rh:settings', st), JSON.stringify({ ...JSON.parse(ONLY('mavonyx')), gatewayUrl: 'http://127.0.0.1:8787' }));
+      bdix.log.length = 0;
+      await page.evaluate(() => { location.hash = '#/watch/movie/603'; });
+      await waitPlaying(page, 1.0);
+      const v = await video(page, (v) => ({ src: v.currentSrc, w: v.videoWidth, audio: v.webkitAudioDecodedByteCount }));
+      assert.equal(v.src, bdix.base + '/media/test.mp4', 'the web API’s MP4, played straight from its host');
+      assert.equal(v.w, 640); assert.ok(v.audio > 0, 'sound is decoded');
+      assert.ok(!seen.some((x) => /BAD-SIGNATURE/.test(x)), 'Chromium sent every signed request unchanged: ' + seen.join(' | '));
+      assert.ok(seen.includes('POST /wefeed-mobile-bff/subject-api/search/v2 signed auth ua:browser'), 'search signed, with the token read from the x-user response header');
+      assert.ok(seen.includes('GET h5 /wefeed-h5api-bff/subject/play auth'), 'web API called with the token');
+      assert.ok(seen.includes('OPTIONS api3.aoneroom.com') && seen.includes('OPTIONS apig.inmoviebox.com'), 'CORS preflights were made, and answered here (not by the internet)');
+      assert.ok(!seen.some((x) => x.startsWith('GATEWAY')), 'never routed through the gateway');
+      assert.ok(!bdix.log.some((r) => r.method === 'POST' || r.path.startsWith('/api/')), 'no BDIX lookups (only the media file)');
+      await page.evaluate(() => [...document.querySelectorAll('button')].find((x) => /Sources/.test(x.textContent)).click());
+      await waitFor(() => page.$('dialog.sheet[open] .ticket'), { what: 'tickets' });
+      assert.equal(await text(page, 'dialog.sheet .pstat .chip[data-provider="mavonyx"]'), 'Mavonyx: 2 found');
+      const t = await page.$$eval('dialog.sheet .ticket', (els) => els.map((e) => ({ name: e.querySelector('.name').textContent, level: e.dataset.level, text: e.textContent })));
+      assert.equal(t.length, 2);
+      assert.equal(t[0].level, 'ok'); assert.match(t[0].text, /1080p/);
+      assert.equal(t[1].level, 'bad', 'the 2160p DASH stream ranks last'); assert.match(t[1].text, /DASH/);
+      await shot(page, 'mavonyx-sources');
+      assert.deepEqual(await b.cspViolations(page), []);
+    } finally { await page.close(); }
+    // control: without `expose-headers` the browser hides x-user, the API refuses the unauthenticated calls, nothing is found
+    const page2 = await b.newPage({ width: 390, height: 844, touch: true, label: 'mavonyx-hidden-token' });
+    page2.__expectErrors = true;
+    const seen2 = mockMavonyxApi(page2, { mp4Url: bdix.base + '/media/test.mp4', expose: false });
+    try {
+      await open(page2, '#/movie/603');
+      await waitFor(() => page2.$('.dinfo h1'), { what: 'details' });
+      await page2.evaluate((st) => localStorage.setItem('rh:settings', st), ONLY('mavonyx'));
+      await page2.evaluate(() => { location.hash = '#/watch/movie/603'; });
+      await waitFor(() => page2.$('.pstat .chip[data-provider="mavonyx"]:not([data-state="start"])'), { what: 'mavonyx chip' });
+      assert.equal(await text(page2, '.pstat .chip[data-provider="mavonyx"]'), 'Mavonyx: no match'); // the token request itself succeeded
+      assert.ok(seen2.some((x) => /search\/v2 signed no-auth/.test(x)), 'token not readable, so sent without it: ' + seen2.join(' | '));
+      // the "No sources found" message must not spill out of the 16:9 stage over the title bar (phone)
+      const fit = await page2.evaluate(() => { const l = document.querySelector('.stage .loading'); const st = document.querySelector('.stage').getBoundingClientRect(); const r = l.getBoundingClientRect(); return { over: l.scrollHeight - l.clientHeight, top: r.top - st.top, bottom: st.bottom - r.bottom }; });
+      assert.ok(fit.over <= 1 && fit.top >= 0 && fit.bottom >= 0, `message fits the stage: ${JSON.stringify(fit)}`);
+      await shot(page2, 'mavonyx-hidden-token-phone');
+    } finally { await page2.close(); }
+  });
+
   await step('online sources down + BDIX down: guidance names the BDIX problem and mentions the online sources', async () => {
     const page = await b.newPage({ width: 1280, height: 900, label: 'public-down' });
     page.__expectErrors = true;
-    page.__intercept = (r, u) => (u.hostname === 'enc-dec.app' ? (r.abort('internetdisconnected'), true) : false); // Fendrix unreachable
+    page.__intercept = (r, u) => (u.hostname === 'enc-dec.app' || /aoneroom\.com$|inmoviebox\.com$/.test(u.hostname) ? (r.abort('internetdisconnected'), true) : false); // Fendrix and Mavonyx unreachable
     try {
       await open(page, '#/movie/603');
       await waitFor(() => page.$('.dinfo h1'), { what: 'details' });
@@ -245,7 +342,7 @@ export async function steps4(ctx) {
       bdix.state.down = true;
       await page.evaluate(() => [...document.querySelectorAll('button')].find((x) => /Download/.test(x.textContent)).click());
       await waitFor(() => page.$('dialog.sheet .notice'), { what: 'guidance' });
-      assert.deepEqual(await page.$$eval('.pstat .chip', (e) => e.map((x) => x.textContent)), ['DhakaFlix: unreachable', 'Circle FTP: unreachable', 'FlixHub: off', 'Fendrix: unreachable', 'Hexion: off']);
+      assert.deepEqual(await page.$$eval('.pstat .chip', (e) => e.map((x) => x.textContent)), ['DhakaFlix: unreachable', 'Circle FTP: unreachable', 'FlixHub: off', 'Fendrix: unreachable', 'Hexion: off', 'Mavonyx: unreachable']);
       assert.match(await text(page, 'dialog.sheet .notice h3'), /Could not reach the BDIX servers/);
       assert.ok(await hasText(page, 'dialog.sheet .notice li', /BDIX-connected network/));
       assert.ok(await hasText(page, 'dialog.sheet .notice li', /online sources did not answer either/));

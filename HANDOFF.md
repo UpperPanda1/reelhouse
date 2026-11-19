@@ -4,15 +4,16 @@
 
 ## Status
 
-* Built and tested: 130 unit and integration tests, 37 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
+* Built and tested: 144 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
 * **Connection and playback fixes (Nov 19, 2026)**, from the owner's report "Fendrix: 1 found but never plays; Hexion and BDIX unreachable" and live checks against the deployment (`VERIFICATION.md` section 18):
   * *Endless spinner*: the player's watchdog was armed only after the first `canplay`, and hls.js failures were never reported. Without built-in HLS (Firefox, older Chrome) Fendrix's CDN refuses hls.js (it 404s any foreign `Origin`), so the page spun forever. Now the player gives up in about a second and explains (built-in HLS, gateway or external player).
   * *FlixHub is a BDIX server* (original: "FlixHub FTP: BDIX"); it was wrongly sent through the Cloudflare edge proxy (504). Now it is treated like DhakaFlix and Circle FTP.
   * *Hexion's sites block Cloudflare* (403 "error code: 1106" / bot challenge from the edge). Not fixable from Cloudflare: Hexion needs the gateway on `pages.dev`; the app now says "Hexion: needs gateway" instead of "server error". Through the real gateway Hexion returned 8 streams in 3.4 s.
   * *DhakaFlix / Circle FTP without a gateway*: no code bug; the browser rules (CORS, mixed content) make the gateway necessary on `pages.dev`. The port still matches the original scrapers (golden parity test).
+* Online source **Mavonyx** (MovieBox API, Nov 19, 2026): port of `mavonyx.js` with the same signed requests (HMAC-MD5 `x-tr-signature`, token from the `x-user` header, refresh on 401/441). Straight from the browser, like Fendrix: the API's CORS allows every signed header and exposes `x-user` (measured). It is **region-gated** (403 "Service not available in current region" from the US sandbox; the owner reports lookup and playback working in their browser), so live streams were never seen here. MP4/HLS play in the built-in player; DASH (`.mpd`) is ranked "unlikely to play" until a DASH player is added. Parity test runs the original file in a `vm` against a mock that checks every signature with `node:crypto`; a real-Chromium E2E step proves the preflight, the readable token header and playback. The 29 KB lookup (`mx-api.js`) loads on the first click; the home page only gets a 0.5 KB stub.
 * Online sources **Fendrix** and **Hexion** (Nov 2026): ported, checked against the live services from the sandbox (VERIFICATION section 18) and covered by parity tests against the original scraper files. Fendrix plays with built-in HLS (Chrome/Edge 142+, Safari), through the gateway in other browsers (Firefox: HLS playlists rewritten, tested with hls.js), or in an external player; Hexion's link domains rotate (`EDGE_PROXY_HOSTS`).
 * **Accounts, lists, sync** (Nov 2026): invite-only accounts on Cloudflare D1, sign-in, password change, admin page (invites, users), named watch lists, history removal with Undo, and a merge-based sync of history/lists/resume positions/settings between devices. Unit, multi-device browser and real-`workerd`+D1 tests. Deploy steps: README *Accounts*.
-* **Not verified**: a live D1 database on Cloudflare (local D1 in workerd only); the real BDIX servers (DhakaFlix, Circle FTP, FlixHub), TMDB and OpenSubtitles were unreachable during development (mocks used); the deployment `raftv.pages.dev` was only read (public GETs), nothing was deployed from a session; Fendrix playback in the owner's own browser; Firefox/Safari; real phones; https `pages.dev` with the gateway. See `VERIFICATION.md` section 14.
+* **Not verified**: Mavonyx against the live API (region-gated from the sandbox: real stream URLs, formats, sign cookies and caption hosts unseen); a live D1 database on Cloudflare (local D1 in workerd only); the real BDIX servers (DhakaFlix, Circle FTP, FlixHub), TMDB and OpenSubtitles were unreachable during development (mocks used); the deployment `raftv.pages.dev` was only read (public GETs), nothing was deployed from a session; Fendrix playback in the owner's own browser; Firefox/Safari; real phones; https `pages.dev` with the gateway. See `VERIFICATION.md` section 14.
 * Key constraint: **Cloudflare cannot reach BDIX**, and an https page cannot freely call http BDIX servers. On `pages.dev` the user normally needs the **gateway** (`gateway/bdix-gateway.mjs`) on their own device or network.
 
 ## Read order
@@ -27,7 +28,7 @@ public/                  deployed as-is
   js/brand.js            name, tagline, theme colour, logo path (single source)
   js/main.js router.js api.js store.js net.js player.js streams.js subs.js util.js core.js
   js/account.js          sign-in state + sync engine;  js/sync-merge.js  merge rules (tombstones, last-writer-wins)
-  js/providers/          df.js cf.js fh.js (BDIX servers), fn.js (Fendrix) hx.js (Hexion) aesgcm.js, common.js, index.js (orchestrator)
+  js/providers/          df.js cf.js fh.js (BDIX servers), fn.js (Fendrix) hx.js (Hexion) mx.js + mx-api.js (Mavonyx) aesgcm.js, common.js, index.js (orchestrator)
   js/ui/                 home details watch browse settings sources shell components
   vendor/                committed player (ArtPlayer), hls.js light, font (versioned, immutable)
 functions/api/[[path]].js   the single Pages Function -> lib/api.js
@@ -53,7 +54,7 @@ Outside npm: **Node 22+**; **ffmpeg** with libx264/libx265/vpx/aac/ac3/opus for 
 
 ```bash
 npm ci                    # installs everything incl. Chromium and workerd binaries (no other downloads needed)
-npm test                  # 130 tests, ~3 s
+npm test                  # 144 tests, ~3 s
 npm run e2e:media         # once; writes e2e/media/ (git-ignored)
 npm run e2e               # ~4 min; add a word to run matching steps only
 npm run smoke:cf          # ~20 s
@@ -72,7 +73,7 @@ Sandbox reminders (details: `VERIFICATION.md` section 3): network reach varies b
 
 ## Open items
 
-Real-network validation on BDIX (with the gateway); Firefox/Safari pass; a browser extension as a no-gateway route for Hexion and BDIX (would need its own review); gateway setup helper page; WebAssembly decode fallback for HEVC/DTS; episode list on the watch page. Full list in `CLAUDE.md`.
+Real-network validation on BDIX (with the gateway); a DASH player for Mavonyx's `.mpd` streams (dash.js or Shaka, lazy-loaded; signed cookies would have to become signed-URL query parameters); Firefox/Safari pass; a browser extension as a no-gateway route for Hexion and BDIX (would need its own review); gateway setup helper page; WebAssembly decode fallback for HEVC/DTS; episode list on the watch page. Full list in `CLAUDE.md`.
 
 ## Prompt to start a new session
 
@@ -88,8 +89,8 @@ READ FIRST, in this order, before changing anything:
 my task  4. VERIFICATION.md (before touching tests).
 
 SETUP: Node 22+, run `npm ci`, then `npm test` and confirm the baseline before
-you change code (130 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
-(37 steps).
+you change code (144 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
+(38 steps).
 
 TASK: <one or two sentences: what I want, and why>
 

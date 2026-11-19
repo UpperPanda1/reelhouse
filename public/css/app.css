@@ -243,6 +243,9 @@ dialog.sheet[open] { animation: rise .18s ease-out; }
 .stage .art-video-player { width: 100% !important; height: 100% !important; }
 .stage .loading { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 14px; padding: 20px; color: var(--dim); }
 .stage .loading h2 { color: var(--text); font-size: 20px; }
+/* a message (no sources, errors) can be taller than 16:9 on a phone: the stage grows instead of spilling over the title bar */
+.stage:has(> .msg) { display: grid; aspect-ratio: auto; max-height: none; min-height: min(56.25vw, calc(100dvh - var(--topbar-h) - 70px)); }
+.stage > .loading.msg { position: static; }
 .spin { width: 28px; height: 28px; margin: 0 auto; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--lamp); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .watch-below { padding: 14px var(--pad) 40px; display: grid; gap: 14px; max-width: 1100px; width: 100%; margin: 0 auto; }

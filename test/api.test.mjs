@@ -19,8 +19,8 @@ function upstream(overrides = {}) {
       if (p === '/trending/all/day') return r({ results: [...results(3, { media_type: 'movie' }), { id: 99, media_type: 'person', name: 'X', profile_path: '/x' }] });
       if (p.endsWith('/popular') || p.endsWith('/top_rated')) return r({ results: results(4) });
       if (p === '/search/multi') return r({ page: 1, total_pages: 1, results: [{ id: 1, media_type: 'movie', title: 'A', poster_path: '/a' }, { id: 2, media_type: 'person', name: 'P', poster_path: '/p' }, { id: 3, media_type: 'tv', name: 'B', poster_path: '/b' }, { id: 4, media_type: 'movie', title: 'NoPoster' }] });
-      if (p === '/movie/603') return r({ id: 603, title: 'The Matrix', release_date: '1999-03-31', runtime: 136, imdb_id: 'tt0133093', genres: [{ name: 'Action' }], vote_average: 8.2, poster_path: '/m.jpg', videos: { results: [{ site: 'YouTube', type: 'Trailer', official: true, key: 'abc' }, { site: 'Vimeo', type: 'Trailer', key: 'zzz' }] }, credits: { cast: results(30).map((c) => ({ name: c.name, character: 'c', profile_path: '/h' })) }, recommendations: { results: results(30) } });
-      if (p === '/tv/1396') return r({ id: 1396, name: 'Breaking Bad', first_air_date: '2008-01-20', episode_run_time: [47], seasons: [{ season_number: 0, episode_count: 5, name: 'Specials' }, { season_number: 1, episode_count: 7, name: 'Season 1', air_date: '2008-01-20' }, { season_number: 2, episode_count: 0, name: 'Empty' }], external_ids: { imdb_id: 'tt0903747' }, genres: [], credits: {}, recommendations: {}, videos: {} });
+      if (p === '/movie/603') return r({ id: 603, title: 'The Matrix', original_title: 'The Matrix', release_date: '1999-03-31', runtime: 136, imdb_id: 'tt0133093', genres: [{ name: 'Action' }], vote_average: 8.2, poster_path: '/m.jpg', videos: { results: [{ site: 'YouTube', type: 'Trailer', official: true, key: 'abc' }, { site: 'Vimeo', type: 'Trailer', key: 'zzz' }] }, credits: { cast: results(30).map((c) => ({ name: c.name, character: 'c', profile_path: '/h' })) }, recommendations: { results: results(30) } });
+      if (p === '/tv/1396') return r({ id: 1396, name: 'Breaking Bad', original_name: 'Breaking Bad', first_air_date: '2008-01-20', episode_run_time: [47], seasons: [{ season_number: 0, episode_count: 5, name: 'Specials' }, { season_number: 1, episode_count: 7, name: 'Season 1', air_date: '2008-01-20' }, { season_number: 2, episode_count: 0, name: 'Empty' }], external_ids: { imdb_id: 'tt0903747' }, genres: [], credits: {}, recommendations: {}, videos: {} });
       if (p === '/tv/1396/season/1') return r({ season_number: 1, name: 'Season 1', episodes: [{ episode_number: 1, name: 'Pilot', overview: 'x'.repeat(500), still_path: '/s1', runtime: 58, air_date: '2008-01-20', vote_average: 8.04 }] });
       if (p === '/movie/603/recommendations') return r({ results: results(30) });
       if (p === '/movie/0') return r({ status_message: 'nf' }, 404);
@@ -68,9 +68,11 @@ test('missing key -> 501 with a setup hint; /health reports configuration withou
 test('title: movie and tv shapes (specials/empty seasons removed, trailer, imdb id, caps)', async () => {
   const m = (await get('/api/title/movie/603')).body;
   assert.equal(m.imdbId, 'tt0133093'); assert.equal(m.runtime, 136); assert.equal(m.trailer.key, 'abc');
+  assert.equal(m.originalTitle, 'The Matrix'); assert.equal(m.rating, 8.2); // Mavonyx searches by both titles and scores the rating
   assert.equal(m.cast.length, 14); assert.equal(m.recs.length, 18); assert.deepEqual(m.genres, ['Action']);
   const t = (await get('/api/title/tv/1396')).body;
   assert.deepEqual(t.seasons.map((s) => s.n), [1]); assert.equal(t.imdbId, 'tt0903747'); assert.equal(t.runtime, 47);
+  assert.equal(t.originalTitle, 'Breaking Bad');
 });
 
 test('season: episode fields trimmed and rounded', async () => {

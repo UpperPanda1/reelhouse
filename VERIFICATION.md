@@ -86,6 +86,7 @@ Typical durations: unit about 3 s; E2E 3-4 minutes; Cloudflare smoke about 20 s.
 | `test/api.test.mjs` | `lib/` (API router, TMDB client, subtitle service) | A fake upstream `fetch` records every call. Checks: 5-row aggregation and slimmed payload; persons and posterless items dropped; exactly one upstream call per row; key sent as `api_key` (v3) or `Bearer` (v4) and **never in any response**; missing key → 501; `/health` without secrets; validation (400) and error mapping (404, 401→502, 429→503); OpenSubtitles query is lowercase + alphabetical, TV uses `parent_tmdb_id`; Stremio fallback maps 3-letter codes and filters hosts; subtitle download flow (login, download, gzip link); SSRF guards (non-https, suffix look-alikes, wrong hosts); edge proxy allow-list including `user@host`, ports, look-alike domains; `APP_NAME` sets the OpenSubtitles User-Agent |
 | `test/gateway.test.mjs` | `gateway/bdix-gateway.mjs` | HLS mode (`/s?hls=1`) against a CDN that 404s any Origin: master/variant/`URI=` attributes rewritten with token and headers, relative and absolute URIs, segments byte-exact, Range passed through, no Origin upstream; rewritten child URLs re-checked by the address policy, token required, oversize playlist refused (also when it arrives in one chunk), no rewrite without `hls=1`. A real gateway and a real mock upstream on loopback. Token enforcement; refuses non-loopback without token; envelope forwarding with header allow-list (cookie and custom headers dropped), UA and per-host Referer injection; CORS origin echo and private-network preflight; Range → 206 with exact bytes; content-type fix by extension; `Content-Disposition` sanitising (CR/LF, quotes, non-ASCII); SSRF matrix (loopback, decimal and hex IPv4, `[::1]`, mapped IPv6 in both forms, NAT64, 10/8, 192.168/16, `localhost`, `file:`, `ftp:`, credentials, redirect into link-local); `classify()` table for IPv4 and IPv6 |
 | `test/public-providers.test.mjs` | `providers/fn.js`, `hx.js`, `aesgcm.js`, edge allow-list | The **original** `fendrix.js`/`hexion.js` executed in a `vm` against the same mocks: identical streams and requests (movie/TV, HLS with/without audio renditions, file qualities, WP-API and search paths); deviations (unreadable master, `workers.dev` pages, VC-1); sealed reply survives as bytes, bad tag yields nothing; software AES-GCM equals WebCrypto; no forbidden headers, simple-request POST; gateway bypass and direct media; built-in-HLS ranking; cancel at the first request and mid-chain; hanging fallback endpoint; exact-host edge allow-list incl. look-alikes, ports, userinfo, IP literals |
+| `test/mavonyx.test.mjs` | `providers/mx-api.js` (via `mx.js` in the orchestrator), `ctx.response`, DASH/cookie ranking | The **original** `mavonyx.js` executed in a `vm` against the same mock, which verifies every `x-tr-signature`/`x-client-token` with `node:crypto` and refuses bad ones: identical streams (URL, order, labels, quality, headers, captions) and identical requests (also with non-default audio-track, resolution and subtitle toggles) for a movie with dubs (CloudFront and Cloud CDN sign cookies, placeholder, resolution filters, captions), a film found by its original title, a TV episode, and an expired token (refresh and retry); region refusal (403) reports `error`; no forbidden headers; app stream shape; invalid input makes no request; gateway bypass; cancel at the first request and mid-lookup; MD5/HMAC/canonical string vs `node:crypto`; DASH `bad`, sign cookie `warn` |
 | `test/sync-merge.test.mjs` | `sync-merge.js`, store sync | Merge: newest copy wins, removals (tombstones) are not undone by older copies, newer watches beat removals, lists (items, renames, deletion vs later edits, My List undeletable), caps; commutative/associative/idempotent on 300 random three-device cases (20 000 run once by hand); hostile input normalized (no gateway token, no prototype pollution); two stores meeting through export/import |
 | `test/accounts.test.mjs` | `lib/accounts.js` via `lib/api.js` with D1 on SQLite | No DB = 503; admin bootstrap once from secrets; cookie flags and hashed session ids; CSRF (Origin, JSON only), size limits; invites (hashed, shown once, uses, unlimited, disabled, expired, simultaneous sign-ups: exactly one wins); sign-up rules incl. reserved admin name; no user enumeration; rate limits and their window; password change revokes other sessions; admin-only routes, reset password, remove user, not self; own-account delete, last admin protected; sync per user with optimistic concurrency, normalization, size limit; PBKDF2 format and hash upgrade; sliding 30-day sessions |
 | `test/account-sync.test.mjs` | `public/js/account.js` against the real handler | Two simulated devices: sign-up brings device data into the account; lists/removals/settings both ways; a forced conflict (409) merged and retried; no sync loop after applying the account copy; offline error then recovery; sign-out clears the device; signed out elsewhere; accounts off |
@@ -123,7 +124,7 @@ The golden file is data recorded from the GPL-3.0 originals (see `NOTICE.md`). R
 * **Failure capture**: any browser `console.error` or `pageerror` (except expected 404/5xx resource noise, and except pages flagged `__expectErrors` for deliberate failure injection) and any `securitypolicyviolation` fails the run.
 * **Screenshots** are written to `e2e/screenshots/` (git-ignored) at 390, 820 and 1440 px and for key states; they are reviewed by eye, not compared pixel-wise.
 
-### Steps (37)
+### Steps (38)
 
 | # | Step | Key assertions |
 |---|---|---|
@@ -155,13 +156,14 @@ The golden file is data recorded from the GPL-3.0 originals (see `NOTICE.md`). R
 | 28 | Fendrix without built-in HLS, no gateway (the reported bug) | watch page: hls.js is refused by the CDN, the player stops spinning and says so (`.rh-fail`), the banner gives the reason (built-in HLS or gateway) and the external-player `.m3u`, all within 12 s (measured < 1 s); phone width has no overflow |
 | 29 | Hexion | 4kHdHub chain (search, wrapper, HubCloud, file page) through the edge proxy; one ticket "Hexion (FSL)" with size tag, interstitial link ignored; nothing downloaded during lookup; plays from the file host (HTTP cache off: edge replies are cacheable) |
 | 30 | Hexion blocked at the edge | the mock site answers like the live one does to Cloudflare (403 "error code: 1106"): chip "Hexion: needs gateway", notice "This source needs the gateway here" with the gateway hint |
-| 31 | online + BDIX down | BDIX guidance shown, plus the hint that the online sources did not answer either |
-| 32 | history | remove from Continue watching, Undo restores in place, removal saved; History page: remove, Clear (Cancel keeps, confirm empties; count is current) |
-| 33 | lists | save sheet: switch per list, create list (duplicate name refused inline), saved state; Lists page: rename, remove with Undo, My List undeletable, delete with confirmation; list rails on home; phone without overflow |
-| 34 | accounts | admin first sign-in from secrets; Admin page; invite generated (shown once) and listed; second profile signs up (wrong code and mismatched passwords explained), invite then shown used; no Admin link for users |
-| 35 | sync | two profiles of one account: list and history arrive; a removal on one reaches the other and its open page redraws; sign-out confirms, clears the device, ends the session |
-| 36 | passwords + admin | password change (wrong current refused) signs out the other profile; non-admin refused (page and API); admin reset gives a working temporary password and signs the user out; invite disabled; user removed (signed out); admin page on phone |
-| 37 | accounts off | without a database the site works and Settings has no Account section |
+| 31 | Mavonyx | gateway configured but unused; the MovieBox hosts are answered in the browser with the live CORS shape (Origin echoed, requested headers allowed, `expose-headers: *`); CORS preflights made and answered locally; every signed request verified with `node:crypto` (Chromium sends Accept/Content-Type unchanged and its own User-Agent); token read from `x-user` and sent; web API MP4 plays with sound; Sources sheet: "Mavonyx: 2 found", MP4 recommended, 2160p DASH "Unlikely to play here" with the DASH and cookie reasons; no BDIX lookups; no CSP violations. Control on a phone: without `expose-headers` the token stays hidden, the search goes out unauthenticated, nothing is found |
+| 32 | online + BDIX down | BDIX guidance shown, plus the hint that the online sources did not answer either |
+| 33 | history | remove from Continue watching, Undo restores in place, removal saved; History page: remove, Clear (Cancel keeps, confirm empties; count is current) |
+| 34 | lists | save sheet: switch per list, create list (duplicate name refused inline), saved state; Lists page: rename, remove with Undo, My List undeletable, delete with confirmation; list rails on home; phone without overflow |
+| 35 | accounts | admin first sign-in from secrets; Admin page; invite generated (shown once) and listed; second profile signs up (wrong code and mismatched passwords explained), invite then shown used; no Admin link for users |
+| 36 | sync | two profiles of one account: list and history arrive; a removal on one reaches the other and its open page redraws; sign-out confirms, clears the device, ends the session |
+| 37 | passwords + admin | password change (wrong current refused) signs out the other profile; non-admin refused (page and API); admin reset gives a working temporary password and signs the user out; invite disabled; user removed (signed out); admin page on phone |
+| 38 | accounts off | without a database the site works and Settings has no Account section |
 
 ## 8. Cloudflare runtime smoke test
 
@@ -205,6 +207,8 @@ Procedure: edit the code to re-introduce the bug, run `npm test`, confirm exactl
 | Gateway ignored in ranking | `playability: Fendrix HLS ...` |
 | Accounts (16 mutations: Origin check, JSON check, admin role, disabled/used/expired invites, session revocation on password change, bootstrap when an admin exists, reserved admin name, login rate limit, session expiry, sliding expiry, self-removal, cross-user sync read, optimistic concurrency, normalization, Secure cookie) | `test/accounts.test.mjs` (3 were first missed and got tests) |
 | Sync engine (conflict not merged, sign-out keeps data, 401 ignored, apply guard removed) | `test/account-sync.test.mjs` (2 were first missed and got tests) |
+| Mavonyx: query not sorted / HMAC inner pad 55 / body length in characters / no token refresh / no DASH-first order / `User-Agent` sent / no original-title search / mobile MP4 kept | `mavonyx parity ...` (and the helper, token, header and scenario tests) |
+| Mavonyx track stage swallows `AbortError` | `mavonyx: cancelling while the stream lists are loading ...` (first survived: the cancel test aborted at the token request; this test was added) |
 | Wait for every endpoint (`Promise.all`) again | `fendrix: a hanging fallback endpoint does not hold back ...` |
 | Player watchdog armed on ArtPlayer `ready` again / fatal hls.js errors not reported (each alone) | E2E step 28 (`fendrix without built-in HLS and no gateway ...`) |
 | FlixHub marked `edge` again / `flixhub.net` back in the default edge list | `FlixHub is a BDIX server ...` / both edge allow-list tests |
@@ -265,19 +269,20 @@ Test-side mistakes (not product bugs) were also found and corrected, e.g. a taut
 
 | Suite | Result |
 |---|---|
-| `npm test` | 130 tests pass |
-| `npm run e2e` | 37 steps pass; no browser console errors (steps 26-28 allow exactly the fallback endpoint's CORS error, and step 28 the CDN's refusal of hls.js, which is the case under test); no CSP violations |
+| `npm test` | 144 tests pass |
+| `npm run e2e` | 38 steps pass; no browser console errors (steps 26-28 allow exactly the fallback endpoint's CORS error, and step 28 the CDN's refusal of hls.js, which is the case under test); no CSP violations |
 | `npm run smoke:cf` | 9 checks pass |
 | `npm run check:docs` | passes |
 | Clean-room reproduction | extract the zip, `npm ci`, `npm test`, `npm run build:vendor` (bundles identical to the committed ones), `npm run e2e:media`, `npm run e2e`, `npm run smoke:cf` |
 
-Measured on the home page (desktop, local server, printed by E2E step 22): 72 requests, app JS 169 KB as served to the browser (budget 170 KB: little headroom left; 205 KB across all 31 modules on disk, 62 KB gzipped; Settings, account screens and Admin load on first use), CSS 24 KB, font 40 KB, `DOMContentLoaded` 130-190 ms. Player libraries are not requested on the home page.
+Measured on the home page (desktop, local server, printed by E2E step 22): 73 requests, app JS 170 KB as served to the browser (budget 170 KB: **about 50 bytes left**. Before Mavonyx 740 bytes were left; its stub, registration, ranking rules and meta fields cost about 0.7 KB after condensing some comments in `providers/index.js`, as in bug 31. The next home-page addition needs a structural saving, e.g. loading `providers/index.js` and `streams.js` on the first Play/Download; 229 KB across all 33 modules on disk, 71 KB gzipped; Settings, account screens, Admin and the Mavonyx lookup load on first use), CSS 24 KB, font 40 KB, `DOMContentLoaded` 130-190 ms. Player libraries are not requested on the home page.
 
 ## 14. Not verified (and how to verify it yourself)
 
 | Not verified | Why | How to check |
 |---|---|---|
 | Fendrix and Hexion on a real deployment | checked live from the sandbox in Node and Chromium (section 18); from Cloudflare's edge Hexion is **blocked** (measured, section 18), so on `pages.dev` it needs the gateway; Fendrix playback in your own browser was not observed; not in real Firefox (simulated in Chromium by hiding built-in HLS; with a gateway it plays via hls.js) or on phones | Open a popular title on your deployed site; Settings → Test connection shows both rows |
+| Mavonyx against the live API | its mobile API refuses the sandbox's region (403 "Service not available in current region"); the web API answers but has no streams for that region. Real stream lists, formats, sign cookies, caption hosts and whether MP4/HLS play without the cookie were never seen | On your phone/PC in Bangladesh: play a popular title with only Mavonyx on (Settings → Sources); open Sources to see which formats arrive; tell the next session what played and what did not (paste one stream URL with the signatures cut off) |
 | Real BDIX servers (DhakaFlix, Circle FTP, FlixHub) | unreachable from the build sandbox; response shapes come from the original parsers | On your network: deploy or run `npm run dev`, open **Settings → Test connection**, then play a title you know exists |
 | Real TMDB and OpenSubtitles | blocked from the sandbox; mocked with documented shapes | Set your keys; open Home; play something; check Subtitles |
 | A real Cloudflare deployment, edge caching, quotas | the deployed site was only read (public GETs: `/api/health`, `/api/proxy`, section 18); nothing was deployed from here | Deploy; watch the Functions analytics |
@@ -286,6 +291,8 @@ Measured on the home page (desktop, local server, printed by E2E step 22): 72 re
 | Real phones and touch gestures | emulated viewport only | Test on your phone: layout, player controls, external-player links |
 | Audible sound | measured as decoded audio bytes | Listen once |
 | Long sessions, memory | not exercised | Play a full episode |
+
+**Fixed (pre-existing, found Nov 19, 2026):** on a phone the watch page's "No sources found" message overflowed its 16:9 stage and covered the title bar (`.stage .loading` was absolutely centred in the fixed-ratio box). Error messages now carry `.msg`, and a stage holding one grows to fit (`public/css/app.css`); E2E step 31 checks it at 390 px (it failed with 67 px of overflow before the fix).
 
 ## 15. Reproduce from scratch
 
@@ -351,6 +358,16 @@ Done by hand from the sandbox, not part of any test (tests never reach the inter
 | Deployed `/api/proxy` → `flixhub.net` | 504 after 10 s; `flixhub.net` resolves to 103.123.169.192 (Bangladesh), unreachable from the sandbox too |
 | Hexion port through the **real gateway** (Node, sandbox connection), The Matrix | 8 streams in 3.4 s |
 | Original bdix-df/cf/fh files vs. the plugin's assets in `eclipsia-bdix` | identical (the golden parity test runs these) |
+
+**Nov 19, 2026 (Mavonyx / MovieBox).** From the sandbox (US egress, CloudFront POP IAD), before porting:
+
+| Check | Result |
+|---|---|
+| Original `mavonyx.js` in Node, Inception | 0 streams: token request `apig.inmoviebox.com` 403, `search/v2` on `api3.aoneroom.com` 403 |
+| Those hosts, plain GET | **403 `{"message":"Service not available in current region"}`** (CloudFront / Envoy): region gate, not a signature error |
+| `h5-api.aoneroom.com` `/wefeed-h5api-bff/subject/play` | 200, `x-user` token header; `/subject/search` with that token finds Inception; `play` for it: `streams: []`, `hasResource: false`, `maxResolution: 480` |
+| Preflight to `api3.aoneroom.com` and `h5-api.aoneroom.com`, Origin `https://raftv.pages.dev`, all signed headers requested | 200, that Origin echoed, every requested header allowed, `expose-headers: *`, `allow-credentials: true`, max-age 86400 |
+| `mavonyx.js` vs the copy in the plugin's assets | identical |
 
 ## 19. Accounts in the real Cloudflare runtime
 

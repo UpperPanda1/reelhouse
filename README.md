@@ -7,7 +7,7 @@ A fast, streaming-style website for browsing what is trending (TMDB) and playing
 | Discovery | Trending, popular, top-rated rows, search, "Because you watched", Continue watching and History (remove single titles, with Undo), named watch lists (TMDB, free key) |
 | Accounts (optional) | Invite-only sign-up, sign-in, password change; history, lists, resume positions and settings sync across devices; admin page for invite codes and users |
 | Details | Movie / series pages, seasons and episodes, cast, recommendations, trailer link |
-| Streaming | BDIX servers (DhakaFlix, Circle FTP, FlixHub) and online sources (Fendrix, Hexion) are queried **only when you press Play or Download**, never while browsing |
+| Streaming | BDIX servers (DhakaFlix, Circle FTP, FlixHub) and online sources (Fendrix, Hexion, Mavonyx) are queried **only when you press Play or Download**, never while browsing |
 | Player | ArtPlayer: MP4, MOV, MKV, WebM, HLS; resume; next episode; source switching; keyboard shortcuts |
 | Subtitles | OpenSubtitles search (official API or keyless fallback), upload your own; size, height, colour and background are adjustable |
 | Download | Separate button on the movie page and on every episode; ranked list of sources with copy-link, VLC/MX/Infuse links and an `.m3u` playlist |
@@ -46,7 +46,7 @@ So there are three connection modes (Settings → Connection):
 | **Edge proxy** (automatic for Hexion) | Public https sites without CORS that accept requests from Cloudflare; the Pages Function fetches the pages for you. Only the exact hosts in `EDGE_PROXY_HOSTS` are allowed (default in `lib/api.js`: the Hexion/4kHdHub link chain). **As of Nov 19, 2026 Hexion's sites block Cloudflare** (the app shows "Hexion: needs gateway"): use the gateway for Hexion. | none; if Hexion shows "server error" (not "needs gateway"), its link domains moved: add the new ones to `EDGE_PROXY_HOSTS` |
 | **Gateway** (needed for BDIX on `pages.dev`, and for Hexion) | Always, if the machine running it is on BDIX (for Hexion any internet connection will do). Sets `Referer`/`User-Agent`, adds CORS, streams video with Range support, forces real downloads. | run `node gateway/bdix-gateway.mjs` (below) |
 
-**Online sources (no BDIX needed).** *Fendrix* (Cinejoy/Shegu) is called straight from your browser, never through the gateway; its videos are HLS from a server that refuses in-page players, so they play in browsers with built-in HLS (Chrome/Edge 142+, Safari, iPhone/iPad); in browsers without it (Firefox) they play **when a gateway is set** (the gateway fetches the video and rewrites its playlists), otherwise in an external player (VLC, MX Player via the source's *More* menu). *Hexion* (4kHdHub) is looked up through your gateway (the edge proxy is tried without one, but the sites currently refuse Cloudflare); its files are large releases, often with Dolby (DD+/DTS) audio that browsers play silently: the app warns and offers the external players. Both can be switched off in Settings → Sources.
+**Online sources (no BDIX needed).** *Fendrix* (Cinejoy/Shegu) is called straight from your browser, never through the gateway; its videos are HLS from a server that refuses in-page players, so they play in browsers with built-in HLS (Chrome/Edge 142+, Safari, iPhone/iPad); in browsers without it (Firefox) they play **when a gateway is set** (the gateway fetches the video and rewrites its playlists), otherwise in an external player (VLC, MX Player via the source's *More* menu). *Hexion* (4kHdHub) is looked up through your gateway (the edge proxy is tried without one, but the sites currently refuse Cloudflare); its files are large releases, often with Dolby (DD+/DTS) audio that browsers play silently: the app warns and offers the external players. *Mavonyx* (the MovieBox apps' catalogue) is called straight from your browser too, never through the gateway or the edge proxy. Its API answers only in some countries (it refused the US-based build machine with "Service not available in current region"; it worked for the owner in Bangladesh), so it depends on where *your* device is. Its plain video files (MP4, HLS) play in the built-in player; its DASH streams (`.mpd`) do not yet and are listed as "Unlikely to play here" with the external-player links. All three can be switched off in Settings → Sources.
 
 The app tells you which situation you are in: **Settings → Test connection** reports each host as *reachable*, *reachable but blocked by CORS*, *unreachable*, *gateway token rejected* or *blocked by the gateway*.
 
@@ -170,9 +170,9 @@ Traffic caveat: through the gateway, video flows *server → gateway → your de
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local server (static + API + `_headers`) |
-| `npm test` | 130 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
+| `npm test` | 144 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
 | `npm run e2e:media` | Generates the small test videos (needs `ffmpeg`) |
-| `npm run e2e` | 37 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
+| `npm run e2e` | 38 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
 | `npm run smoke:cf` | Runs the real Cloudflare runtime (`wrangler pages dev` / workerd) against a mock TMDB: 9 Cloudflare runtime checks of the Function, routing and headers |
 | `npm run rebrand` | Syncs `index.html` and the web manifest with `public/js/brand.js` after you change the name or colour |
 | `npm run check:docs` | Checks that the documentation still matches the code (paths, scripts, counts, versions, env vars) |
@@ -187,7 +187,7 @@ The E2E run launches Chromium from the `@sparticuz/chromium` package with its se
 
 ```
 public/            deployed as-is: index.html, css/, js/ (ES modules), vendor/ (player, font)
-  js/providers/    browser port of the eclipsia scrapers: DhakaFlix, Circle FTP, FlixHub, Fendrix, Hexion (+ shared parsing)
+  js/providers/    browser port of the eclipsia scrapers: DhakaFlix, Circle FTP, FlixHub, Fendrix, Hexion, Mavonyx (+ shared parsing)
   js/ui/           views: home, details, watch, sources sheet, settings, browse
 functions/api/     the single Pages Function: all of /api/*
 lib/               API router, TMDB client, subtitle service (shared by Function, dev server, tests)
