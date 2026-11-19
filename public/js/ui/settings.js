@@ -1,4 +1,4 @@
-import { h, mount } from '../util.js';
+import { h, mount, copyText } from '../util.js';
 import { store } from '../store.js';
 import { net } from '../core.js';
 import { api } from '../api.js';
@@ -43,13 +43,25 @@ export function openSettings() {
         ['Hexion', hexion.endpoints.base + '/', hexion],
         ['Mavonyx', null, null],
       ];
+      const old = diag.parentElement && diag.parentElement.querySelector('.mx-trace');
+      if (old) old.remove();
       mount(diag, targets.map(([name]) => h('div', { dataset: { host: name } }, h('span', null, name), h('span', null, 'testing\u2026'))));
       await Promise.all(targets.map(async ([name, url, provider], i) => {
         let state;
         let custom = null;
         if (name === 'Mavonyx') {
           // the real first steps (signed token + search), so the row says which one fails (mx-api.js diagnose)
-          try { const m = await import('../providers/mx-api.js'); custom = await m.diagnose(makeCtx(net, m)); } catch { custom = { ok: false, text: 'unreachable' }; }
+          try {
+            const m = await import('../providers/mx-api.js');
+            custom = await m.diagnose(makeCtx(net, m));
+            // a real lookup (Inception), each stage written down, to see where "no match" comes from
+            const lines = await m.trace(makeCtx(net, m));
+            const text = lines.join('\n');
+            diag.after(h('details', { class: 'mx-trace', dataset: { trace: 'mavonyx' } },
+              h('summary', null, 'Mavonyx lookup trace (Inception)'),
+              h('pre', { style: { whiteSpace: 'pre-wrap', fontSize: '12px', color: 'var(--dim)', margin: '8px 0' } }, text),
+              h('button', { class: 'btn small', type: 'button', onClick: () => copyText(text).then((ok) => toast(ok ? 'Trace copied' : 'Could not copy')) }, 'Copy trace')));
+          } catch { custom = custom || { ok: false, text: 'unreachable' }; }
           state = custom.ok ? 'ok' : 'unreachable';
         } else if (name === 'Gateway') { try { const r = await fetch(url); state = r.ok ? 'ok' : 'unreachable'; } catch { state = 'unreachable'; } } else if (provider && (provider.direct || !gwOn)) {
           try { const r = await net.request(url, { provider, timeoutMs: 8000 }); state = r.ok ? 'ok' : 'unreachable'; } catch { state = 'unreachable'; }

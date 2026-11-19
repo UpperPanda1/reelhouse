@@ -188,9 +188,11 @@ const clientInfo = (deviceId) => JSON.stringify({
 });
 
 // ---------------------------------------------------------------- one lookup's API session ----
-function session(ctx) {
+/** `log`: an array to record each stage in (Settings -> Test connection trace); normal lookups pass none. */
+function session(ctx, log = null) {
   const info = clientInfo(randomDeviceId());
   const s = { token: '', pending: null };
+  const note = (t) => { if (log) log.push(t); };
 
   async function signed(method, url, body, withAuth) {
     const timestamp = Date.now();
@@ -218,6 +220,7 @@ function session(ctx) {
       try { const res = await signed('GET', endpoints.mobile + endpoints.token.slice(endpoints.token.indexOf('/wefeed')), null, false); const t = res && parseTokenHeader(res.headers.get('x-user')); if (t) { s.token = t; s.source = 'app host'; } } catch (e) { unlessAbort(null)(e); }
     }
     if (!s.token) { s.webToken = true; s.token = await webToken(); if (s.token) s.source = 'web API'; }
+    note(`token: ${s.token ? (s.source || 'apig') : 'none readable'}`);
     return s.token;
   }
   async function webToken() {
@@ -247,10 +250,16 @@ function session(ctx) {
   }
   async function mobileJson(method, pathAndQuery, payload) {
     const res = await mobile(method, pathAndQuery, payload ? JSON.stringify(payload) : null);
-    if (!res || res.status !== 200) return null;
-    try { return await res.json(); } catch (e) { return unlessAbort(null)(e); }
+    const path = pathAndQuery.split('?')[0].split('/').pop();
+    if (!res || res.status !== 200) { note(`${path}: ${res ? 'HTTP ' + res.status : s.refused ? 'skipped (token refused)' : 'no reply'}`); return null; }
+    try {
+      const json = await res.json();
+      // the API also reports errors inside an HTTP 200 (measured on the web API: {"code":400,"message":"invalid token"})
+      if (json && json.code !== undefined && String(json.code) !== '0') note(`${path}: HTTP 200 but code ${json.code} ${json.message || json.reason || ''}`.trim());
+      return json;
+    } catch (e) { note(`${path}: unreadable reply`); return unlessAbort(null)(e); }
   }
-  return { s, ensureToken, mobileJson, signed };
+  return { s, ensureToken, mobileJson, signed, note };
 }
 
 // ---------------------------------------------------------------- matching (as the original) ----
@@ -303,8 +312,10 @@ const usable = (x) => x && x.subjectId != null && x.title;
 async function searchCatalog(api, keyword) {
   const json = await api.mobileJson('POST', '/wefeed-mobile-bff/subject-api/search/v2', { page: 1, perPage: 20, keyword, restrictKid: 0 });
   const groups = json && json.data && json.data.results;
-  if (!Array.isArray(groups)) return null;
-  return groups.flatMap((g) => (g && Array.isArray(g.subjects) ? g.subjects.filter(usable) : []));
+  if (!Array.isArray(groups)) { api.note(`app search "${keyword}": no result list`); return null; }
+  const list = groups.flatMap((g) => (g && Array.isArray(g.subjects) ? g.subjects.filter(usable) : []));
+  api.note(`app search "${keyword}": ${list.length} results${list.length ? ' (' + list.slice(0, 4).map((x) => `${x.title} ${String(x.releaseDate || '').slice(0, 4)} t${x.subjectType}`).join('; ') + ')' : ''}`);
+  return list;
 }
 /** DEVIATION: web-API search (h5-api, CORS with exposed headers; same item fields as the app API: subjectId, title,
  *  releaseDate, imdbRatingValue, subjectType, detailPath, dubs). Used only when the app API's search gave no usable reply. */
@@ -313,17 +324,19 @@ async function searchWeb(ctx, api, keyword) {
   if (api.s.token) headers.Authorization = 'Bearer ' + api.s.token;
   try {
     const res = await ctx.response(`${endpoints.web}/wefeed-h5api-bff/subject/search`, { method: 'POST', headers, body: JSON.stringify({ keyword, page: 1, perPage: 20, subjectType: 0 }) });
-    if (!res || res.status !== 200) return null;
+    if (!res || res.status !== 200) { api.note(`web search "${keyword}": ${res ? 'HTTP ' + res.status : 'no reply'}`); return null; }
     const json = await res.json();
     const items = json && json.data && json.data.items;
+    api.note(`web search "${keyword}": ${Array.isArray(items) ? items.length + ' results' : `code ${json && json.code} ${(json && json.message) || ''}`}`);
     return Array.isArray(items) ? items.filter(usable) : null;
   } catch (e) { return unlessAbort(null)(e); }
 }
-const pickBest = (lists, md) => {
+const pickBest = (lists, md, note = () => {}) => {
   for (const list of lists) {
     let best = null;
     let bestScore = -Infinity;
     for (const r of list || []) { const sc = scoreSearchResult(r, md); if (sc > bestScore) { bestScore = sc; best = r; } }
+    if (best) note(`best: "${best.title}" ${String(best.releaseDate || '').slice(0, 4)} score ${bestScore} (needs 40) for ${md.titles.join(' / ')} ${md.year || ''} rating ${md.rating ?? '-'}`);
     if (best && bestScore >= 40) return best;
   }
   return null;
@@ -333,14 +346,14 @@ async function findMatchingSubject(ctx, api, md) {
   const queries = [md.titles[0]];
   if (md.titles[1] && normalizeTitle(md.titles[1]) !== normalizeTitle(md.titles[0])) queries.push(md.titles[1]);
   const lists = await Promise.all(queries.map((k) => searchCatalog(api, k)));
-  if (lists.some(Boolean)) { const best = pickBest(lists, md); return best ? { subjectId: String(best.subjectId), item: null } : null; }
+  if (lists.some(Boolean)) { const best = pickBest(lists, md, api.note); return best ? { subjectId: String(best.subjectId), item: null } : null; }
   const web = await Promise.all(queries.map((k) => searchWeb(ctx, api, k)));
   // "no match" only when a search really answered; otherwise the provider reports an error
   if (!web.some(Boolean)) {
     if (ctx.network === ctx.attempts) return null; // all offline: classify() reports "unreachable"
     throw new Error('Mavonyx: no search answered (app API refused, web API unavailable)');
   }
-  const best = pickBest(web, md);
+  const best = pickBest(web, md, api.note);
   return best ? { subjectId: String(best.subjectId), item: best } : null;
 }
 
@@ -424,6 +437,7 @@ const isDash = (s) => String(s.format || '').toUpperCase() === 'DASH' || String(
 async function fetchMobileStreams(api, playback, site) {
   const json = await api.mobileJson('GET', `/wefeed-mobile-bff/subject-api/play-info?subjectId=${playback.subjectId}&se=${playback.season}&ep=${playback.episode}`, null);
   const streams = json && json.data && json.data.streams;
+  api.note(`play-info ${playback.subjectId}: ${Array.isArray(streams) ? streams.length + ' streams' + (streams.length ? ' (' + streams.map((x) => `${x.format || '?'} ${x.resolutions || '?'}${x.signCookie ? ' signed' : ''}`).join(', ') + ')' : '') : 'no stream list'}`);
   if (!Array.isArray(streams)) return [];
   const base = siteHeaders(site.origin, site.path, playback.subjectId);
   const dashFirst = streams.filter(isDash).concat(streams.filter((s) => !isDash(s)));
@@ -494,7 +508,9 @@ async function resolveAudioTrack(ctx, api, context, track) {
       fetchMobileStreams(api, playback, site).catch(unlessAbort([])),
       fetchWebStreams(ctx, api, origins, site.path || '', playback).catch(unlessAbort([])),
     ]);
-    const candidates = mob.concat(web).filter((c) => isResolutionEnabled(c.resolution));
+    const all = mob.concat(web);
+    const candidates = all.filter((c) => isResolutionEnabled(c.resolution));
+    api.note(`track ${track.language}: app ${mob.length}, web ${web.length}${all.length ? ' [' + all.map((c) => `${c.format} ${c.resolution}`).join(', ') + ']' : ''}, kept ${candidates.length} (resolutions on: 2160p, 1080p, unknown${readToggle('res_720p', false) ? ', 720p' : ''})`);
     if (!candidates.length) return [];
     const subtitles = readToggle('subtitles', true) ? await fetchSubtitles(api, candidates[0].streamId, track.language, track.subjectId).catch(unlessAbort([])) : [];
     return candidates.map((c) => ({ ...c, language: track.language, subtitles }));
@@ -514,18 +530,20 @@ export function buildQuery(meta) {
 }
 
 /** The original's candidate list, in its order (deduplicated by URL, then by resolution, stable). */
-export async function lookup(meta, ctx) {
+export async function lookup(meta, ctx, log = null) {
   const q = buildQuery(meta);
   if (!q) return [];
-  const api = session(ctx);
+  const api = session(ctx, log);
   await api.ensureToken(false);
   const match = await findMatchingSubject(ctx, api, q.md);
   if (!match) return [];
   const { subjectId } = match;
   // the web search item carries the same dubs/detailPath when the app API refuses the detail call
   const subject = (await fetchSubjectDetail(api, subjectId)) || match.item;
-  if (!subject) return [];
-  const tracks = extractAudioTracks(subject, subjectId).filter(isTrackEnabled);
+  if (!subject) { api.note(`subject ${subjectId}: no detail`); return []; }
+  const allTracks = extractAudioTracks(subject, subjectId);
+  const tracks = allTracks.filter(isTrackEnabled);
+  api.note(`subject ${subjectId}: ${allTracks.length} audio tracks (${allTracks.map((t) => t.language).join(', ')}), enabled ${tracks.length}`);
   if (!tracks.length) return [];
   const context = { originalSubjectId: subjectId, mainSite: resolveMainSite(subject), season: q.season, episode: q.episode };
   const results = await Promise.all(tracks.map((t) => resolveAudioTrack(ctx, api, context, t)));
@@ -546,12 +564,25 @@ export async function diagnose(ctx) {
   await api.ensureToken(false); // falls back to the web API's token when the app token header is hidden
   const tokenNote = appToken ? '' : api.s.token ? ` (token via ${api.s.source})` : ' (no token readable)';
   const search = await api.signed('POST', endpoints.mobile + '/wefeed-mobile-bff/subject-api/search/v2', JSON.stringify({ page: 1, perPage: 1, keyword: 'Inception', restrictKid: 0 }), true);
-  if (search && search.status === 200) return { ok: true, text: 'reachable' + tokenNote };
+  if (search && search.status === 200) {
+    let json = null;
+    try { json = await search.json(); } catch (e) { unlessAbort(null)(e); }
+    if (json && String(json.code) === '0') return { ok: true, text: 'reachable' + tokenNote };
+    return { ok: false, text: `app API answered HTTP 200 but code ${json ? json.code : '?'} ${(json && (json.message || json.reason)) || ''}`.trim() + tokenNote };
+  }
   const web = await searchWeb(ctx, api, 'Inception');
   const why = !search ? 'unreachable' : search.status === 403 ? 'not available in this region' : `refused (${search.status})`;
   if (web) return { ok: true, text: `web API only: app API ${why}` + tokenNote };
   return { ok: false, text: `app API ${why}; web API unavailable` };
 }
+
+/** Settings -> Test connection: a real lookup for a known film, every stage written down (copy it into a bug report). */
+export async function trace(ctx, meta = { type: 'movie', tmdbId: '27205', title: 'Inception', originalTitle: 'Inception', year: '2010', rating: 8.4 }) {
+  const log = [];
+  try { log.push(`streams found: ${(await lookup(meta, ctx, log)).length}`); } catch (e) { if (isAbortErr(e)) throw e; log.push(`stopped: ${e.message}`); }
+  return log;
+}
+const isAbortErr = (e) => !!e && (e.name === 'AbortError' || e.name === 'TimeoutError');
 
 /** What the original returns for a candidate (minus its invisible sort prefix). Used by the parity test. */
 export function toReference(c) {
