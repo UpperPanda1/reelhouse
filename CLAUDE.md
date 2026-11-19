@@ -117,7 +117,7 @@ Network reach varies by session: earlier ones reached only npm, PyPI, GitHub and
 ## Useful commands
 
 ```bash
-npm ci && npm test                         # install and run 152 unit/integration tests
+npm ci && npm test                         # install and run 153 unit/integration tests
 npm run dev                                # local site (needs TMDB_API_KEY in .dev.vars)
 npm run e2e:media && npm run e2e           # browser suite (needs ffmpeg; FFMPEG=... if not on PATH)
 npm run e2e -- subtitles                   # run only matching steps

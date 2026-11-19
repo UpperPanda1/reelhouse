@@ -82,6 +82,9 @@ const PLAY = {
   '121|0|0': [{ id: 'h1', format: 'HLS', url: 'https://cdn.test/h/121.m3u8', resolutions: '1080' }],
   '202|0|0': [{ id: 'p1', format: 'HLS', url: 'https://cdn.test/h/202.m3u8', resolutions: '2160' }],
   '301|1|2': [{ id: 't1', format: 'HLS', url: 'https://cdn.test/h/301-1-2.m3u8', resolutions: '1080' }],
+  // shaped like the owner's live trace (19 Nov 2026): the app API's only stream is an MP4, the web API has nothing
+  '301|1|4': [{ id: 't4', format: 'MP4', url: 'https://cdn.test/m/301-1-4.mp4', resolutions: '1080,720,480' }],
+  '301|1|5': [{ id: 't5', format: 'MP4', url: 'https://cdn.test/m/301-1-5.mp4', resolutions: '480' }],
 };
 const WEB = {
   111: [{ id: 'w1', url: 'https://web.test/111-1080.mp4', resolutions: '1080' }, { id: 'w2', url: 'https://web.test/111-480.mp4', resolutions: '480' }],
@@ -384,7 +387,7 @@ test('mavonyx trace (Settings): every stage of a real lookup is written down', a
   for (const re of [/^token: app host$/m, /^app search "Inception": 4 results/m, /^best: "Inception" 2010 score \d+ \(needs 40\)/m,
     /^subject 111: 5 audio tracks \(English, Hindi dub, Tamil dub, Arabic sub, English dub\), enabled 3$/m,
     /^play-info 111: 6 streams \(MP4 1080, HLS 720, HLS 1080P, DASH 2160 signed, \? 1080 signed, DASH 1080\)$/m,
-    /^track English: app 4, web 2 \[.*MP4 480p\], kept 4/m, /^streams found: 6$/m]) assert.match(text, re);
+    /^track English: app 4 \(\+1 MP4\), web 2 \[.*MP4 480p\], kept 4/m, /^streams found: 6$/m]) assert.match(text, re);
   // an episode with no streams: the trace says where it ended
   const tv = (await mx.trace(makeCtx(direct(upstream()), mx), { ...META.tv, episode: 3 })).join('\n');
   assert.match(tv, /^play-info 301: 0 streams$/m);
@@ -395,4 +398,13 @@ test('mavonyx diagnose: an HTTP 200 carrying an error code is not "reachable"', 
   assert.deepEqual(await mx.diagnose(makeCtx(direct(upstream({ searchCode: 401 })), mx)), { ok: false, text: 'app API answered HTTP 200 but code 401 token invalid' });
   const t = (await mx.trace(makeCtx(direct(upstream({ searchCode: 401 })), mx))).join('\n');
   assert.match(t, /search\/v2|v2: HTTP 200 but code 401 token invalid/);
+});
+
+test('mavonyx deviation: a track whose only stream is the app API\'s MP4 keeps it (the web API gives a browser nothing)', async () => {
+  const ep4 = await mx.lookup({ ...META.tv, episode: 4 }, makeCtx(direct(upstream()), mx));
+  assert.deepEqual(ep4.map((c) => [c.url, c.resolution, c.format]), [['https://cdn.test/m/301-1-4.mp4', '1080p', 'MP4']]);
+  // the original's resolution filter still applies: a 480p-only MP4 is dropped, as the original drops it
+  assert.deepEqual(await mx.lookup({ ...META.tv, episode: 5 }, makeCtx(direct(upstream()), mx)), []);
+  // the original returns nothing for episode 4 (it drops every app-API MP4)
+  assert.deepEqual(await runReference(upstream(), ['1396', 'tv', 1, 4]), []);
 });
