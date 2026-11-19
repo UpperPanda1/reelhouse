@@ -46,7 +46,7 @@ So there are three connection modes (Settings → Connection):
 | **Edge proxy** (automatic for Hexion) | Public https sites without CORS that accept requests from Cloudflare; the Pages Function fetches the pages for you. Only the exact hosts in `EDGE_PROXY_HOSTS` are allowed (default in `lib/api.js`: the Hexion/4kHdHub link chain). **As of Nov 19, 2026 Hexion's sites block Cloudflare** (the app shows "Hexion: needs gateway"): use the gateway for Hexion. | none; if Hexion shows "server error" (not "needs gateway"), its link domains moved: add the new ones to `EDGE_PROXY_HOSTS` |
 | **Gateway** (needed for BDIX on `pages.dev`, and for Hexion) | Always, if the machine running it is on BDIX (for Hexion any internet connection will do). Sets `Referer`/`User-Agent`, adds CORS, streams video with Range support, forces real downloads. | run `node gateway/bdix-gateway.mjs` (below) |
 
-**Online sources (no BDIX needed).** *Fendrix* (Cinejoy/Shegu) is called straight from your browser, never through the gateway; its videos are HLS from a server that refuses in-page players, so they play in browsers with built-in HLS (Chrome/Edge 142+, Safari, iPhone/iPad); in browsers without it (Firefox) they play **when a gateway is set** (the gateway fetches the video and rewrites its playlists), otherwise in an external player (VLC, MX Player via the source's *More* menu). *Hexion* (4kHdHub) is looked up through your gateway (the edge proxy is tried without one, but the sites currently refuse Cloudflare); its files are large releases, often with Dolby (DD+/DTS) audio that browsers play silently: the app warns and offers the external players. *Mavonyx* (the MovieBox apps' catalogue) is called straight from your browser too, never through the gateway or the edge proxy. Its API answers only in some countries (it refused the US-based build machine with "Service not available in current region"; it worked for the owner in Bangladesh), so it depends on where *your* device is. Its plain video files (MP4, HLS) play in the built-in player; its DASH streams (`.mpd`) do not yet and are listed as "Unlikely to play here" with the external-player links. All three can be switched off in Settings → Sources.
+**Online sources (no BDIX needed).** *Fendrix* (Cinejoy/Shegu) is called straight from your browser, never through the gateway; its videos are HLS from a server that refuses in-page players, so they play in browsers with built-in HLS (Chrome/Edge 142+, Safari, iPhone/iPad); in browsers without it (Firefox) they play **when a gateway is set** (the gateway fetches the video and rewrites its playlists), otherwise in an external player (VLC, MX Player via the source's *More* menu). *Hexion* (4kHdHub) is looked up through your gateway (the edge proxy is tried without one, but the sites currently refuse Cloudflare); its files are large releases, often with Dolby (DD+/DTS) audio that browsers play silently: the app warns and offers the external players. *Mavonyx* (the MovieBox apps' catalogue) is looked up straight from your browser; its real video files are only listed when the request names the movie's MovieBox page, which a browser cannot do and which MovieBox refuses to Cloudflare, so **on pages.dev Mavonyx needs the gateway** for that one request (it is used automatically when set). Its API answers only in some countries (it refused the US-based build machine with "Service not available in current region"; it worked for the owner in Bangladesh), so it depends on where *your* device is. Its plain video files (MP4, HLS) play in the built-in player; its DASH streams (`.mpd`) do not yet and are listed as "Unlikely to play here" with the external-player links. All three can be switched off in Settings → Sources.
 
 The app tells you which situation you are in: **Settings → Test connection** reports each host as *reachable*, *reachable but blocked by CORS*, *unreachable*, *gateway token rejected* or *blocked by the gateway*.
 
@@ -146,6 +146,25 @@ Left unchanged on purpose: the `rh:` prefix of saved settings (changing it would
 
 Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a VPS in Bangladesh). Zero dependencies.
 
+**Windows, no install (`raftv-gateway.exe`).** Download `raftv-gateway.exe` from the repository's *Releases* page (built by GitHub from this code: `.github/workflows/gateway-exe.yml`; push a tag such as `gateway-v1.0.0`, or run the workflow by hand and take the file from the run's *Artifacts*). Put it in its own folder and double-click it:
+
+1. Windows may say "Windows protected your PC" (the program is not code-signed): *More info*, *Run anyway*.
+2. The window shows what to enter in RafTV (in a browser on **the same PC**), *Settings*, *Connection*: the **Address** `http://127.0.0.1:8787` and a **Token**. It listens on this PC only; other devices on your network cannot reach it.
+3. Keep the window open while you watch; close it to stop.
+
+**It writes nothing to disk** (measured with `strace` on the Linux build: no file created, opened for writing, renamed or deleted, also while streaming video); it runs from its own file in memory. The token is not stored: it is derived on every start from this PC's Windows machine id (`MachineGuid`, only read) and your user name, so it stays the same after a restart (the token stops other websites open in your browser from using the gateway). Defaults: this PC only (`127.0.0.1`), port 8787, only `https://raftv.pages.dev` allowed. To change them, you may create `raftv-gateway.json` next to the program, for example `{"token": "your-own-token", "port": 8787, "allowedOrigins": ["https://raftv.pages.dev"]}` (also `host`, `allowPrivate`, `tlsKey`, `tlsCert`); it is only read, never written. The environment variables below override both. Windows itself may still keep its usual traces of any program you start (e.g. its Prefetch entry); the gateway adds none. Build it yourself with `npm run build:gateway` (Windows: run it on Windows; it makes a program for the system it runs on). Measured (Linux build of the same program): starts in about 0.04 s, about 60 MB of memory idle (mostly the Node runtime inside it), about 100 MB while streaming at full local speed, negligible CPU.
+
+**What goes through the gateway** (nothing else does: the site itself, TMDB, subtitles and accounts never):
+
+| Source | Through the gateway |
+|---|---|
+| DhakaFlix, Circle FTP, FlixHub | lookups and video (they are BDIX servers) |
+| Hexion | lookups; video comes straight from the file host |
+| Fendrix | nothing, except its video in browsers without built-in HLS (Firefox) |
+| Mavonyx | only the request that lists the real files (it needs a Referer a browser cannot send, and MovieBox refuses Cloudflare); token, search and video go direct |
+
+**With Node instead:**
+
 ```bash
 node gateway/bdix-gateway.mjs                                   # listens on 127.0.0.1:8787, no token needed (loopback only)
 HOST=0.0.0.0 GATEWAY_TOKEN=choose-a-secret node gateway/bdix-gateway.mjs   # reachable from other devices on your network
@@ -170,7 +189,7 @@ Traffic caveat: through the gateway, video flows *server → gateway → your de
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local server (static + API + `_headers`) |
-| `npm test` | 159 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
+| `npm test` | 166 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
 | `npm run e2e:media` | Generates the small test videos (needs `ffmpeg`) |
 | `npm run e2e` | 38 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
 | `npm run smoke:cf` | Runs the real Cloudflare runtime (`wrangler pages dev` / workerd) against a mock TMDB: 9 Cloudflare runtime checks of the Function, routing and headers |

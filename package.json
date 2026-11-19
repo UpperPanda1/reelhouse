@@ -14,7 +14,8 @@
     "smoke:cf": "node e2e/cloudflare-smoke.mjs",
     "e2e:media": "node e2e/make-media.mjs",
     "rebrand": "node scripts/rebrand.mjs",
-    "check:docs": "node scripts/check-docs.mjs"
+    "check:docs": "node scripts/check-docs.mjs",
+    "build:gateway": "node scripts/build-gateway-exe.mjs"
   },
   "engines": {
     "node": ">=22"

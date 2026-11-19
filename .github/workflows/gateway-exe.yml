@@ -1,0 +1,38 @@
+# Builds raftv-gateway.exe (the gateway as one Windows program, no Node install needed), checks that it starts and
+# works, and attaches it to a GitHub release when a tag like gateway-v1.0.0 is pushed. Manual runs keep it as a
+# downloadable build artifact. See README, "The gateway".
+name: gateway-exe
+on:
+  workflow_dispatch:
+  push:
+    tags: ['gateway-v*']
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # only the gateway files and two pinned build tools (fetched by npx) are used: no npm ci needed
+      - run: node scripts/build-gateway-exe.mjs
+      - run: node scripts/smoke-gateway-exe.mjs dist/gateway/raftv-gateway.exe
+      - name: checksum
+        shell: pwsh
+        run: |
+          (Get-FileHash dist/gateway/raftv-gateway.exe -Algorithm SHA256).Hash.ToLower() + "  raftv-gateway.exe" | Out-File -Encoding ascii dist/gateway/raftv-gateway.exe.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raftv-gateway-windows
+          path: |
+            dist/gateway/raftv-gateway.exe
+            dist/gateway/raftv-gateway.exe.sha256
+      - name: release
+        if: startsWith(github.ref, 'refs/tags/gateway-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/gateway/raftv-gateway.exe dist/gateway/raftv-gateway.exe.sha256 --title "RafTV gateway $GITHUB_REF_NAME" --notes "Double-click raftv-gateway.exe, then enter the address (http://127.0.0.1:8787, this PC only) and token it shows in RafTV > Settings > Connection, in a browser on the same PC. Windows may warn about an unknown publisher (unsigned): More info > Run anyway. It writes nothing to disk; the token is derived from this PC, so it stays the same after a restart."

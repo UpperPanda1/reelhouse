@@ -11,6 +11,7 @@
 // The mobile API is region-gated: elsewhere it answers 403 "Service not available in current region".
 import { makeStream, unlessAbort } from './common.js';
 import { id, name } from './mx.js';
+import { store } from '../store.js';
 
 export { id, name, direct, group } from './mx.js';
 
@@ -21,7 +22,11 @@ export const endpoints = {
   site: 'https://themoviebox.xyz',
   /** this site's Function (lib/mavonyx.js): the web API with the Referer a page cannot send */
   edgePlay: '/api/mavonyx/play',
+  /** a MovieBox host for the movie-page Referer the web API wants (measured: movie-box.co, themoviebox.xyz, h5-api) */
+  refererSite: 'https://movie-box.co',
 };
+/** The user's gateway (Settings, Connection); replaceable in tests. */
+export const env = { gateway: () => { const s = store.settings(); return { url: s.gatewayUrl, token: s.gatewayToken }; } };
 /** The original's SCRAPER_SETTINGS (toggles: subtitles, res_2160p, res_1080p, res_720p, dub_<label>). Empty = its defaults. */
 export const settings = {};
 
@@ -469,16 +474,43 @@ async function fetchEdgeWebStreams(ctx, api, path, playback) {
   if (!path) return null;
   try {
     const res = await ctx.response(`${endpoints.edgePlay}?subjectId=${encodeURIComponent(playback.subjectId)}&se=${playback.season}&ep=${playback.episode}&detailPath=${encodeURIComponent(path)}`);
-    if (!res || res.status !== 200) { api.note(`site web play ${playback.subjectId}: ${res ? 'HTTP ' + res.status : 'no reply'}`); return null; }
+    if (!res || res.status !== 200) {
+      let why = '';
+      if (res) { try { const j = await res.json(); why = j && j.message ? ' ' + j.message : ''; } catch (e) { unlessAbort(null)(e); } }
+      api.note(`site web play ${playback.subjectId}: ${res ? 'HTTP ' + res.status + why : 'no reply'}`);
+      return null;
+    }
     const json = await res.json();
     const streams = json && Array.isArray(json.streams) ? json.streams : [];
     api.note(`site web play ${playback.subjectId}: ${streams.length} streams, hasResource ${json && json.hasResource}`);
     return streams.length ? streams : null;
   } catch (e) { return unlessAbort(null)(e); }
 }
+/** DEVIATION: the same web-API call through the user's gateway (its /p envelope forwards Referer and User-Agent), which
+ *  fetches over the user's own connection. Needed because MovieBox answers Cloudflare's servers with 429 (measured on
+ *  the deployment, 19 Nov 2026). No gateway change: Referer/User-Agent are on its forwarding allow-list. */
+async function fetchGatewayWebStreams(ctx, api, path, playback) {
+  const g = env.gateway() || {};
+  const gw = String(g.url || '').trim().replace(/\/+$/, '');
+  if (!gw || !path) return null;
+  const target = `${endpoints.web}/wefeed-h5api-bff/subject/play?subjectId=${playback.subjectId}&se=${playback.season}&ep=${playback.episode}&detailPath=${path}&streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1`;
+  const headers = { Referer: siteHeaders(endpoints.refererSite, path, playback.subjectId).Referer, 'User-Agent': WEB_USER_AGENT, Accept: 'application/json' };
+  try {
+    // text/plain keeps it a CORS simple request (as net.js does for the gateway)
+    const res = await ctx.response(`${gw}/p${g.token ? '?k=' + encodeURIComponent(g.token) : ''}`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ url: target, method: 'GET', headers }) });
+    if (!res || res.status !== 200) { api.note(`gateway web play ${playback.subjectId}: ${res ? 'HTTP ' + res.status : 'no reply'}`); return null; }
+    const json = await res.json();
+    const d = (json && json.data) || {};
+    const streams = Array.isArray(d.streams) ? d.streams : [];
+    api.note(`gateway web play ${playback.subjectId}: ${streams.length} streams, hasResource ${d.hasResource}`);
+    return streams.length ? streams : null;
+  } catch (e) { return unlessAbort(null)(e); }
+}
 async function fetchWebStreams(ctx, api, origins, path, playback) {
   const replies = await Promise.all(origins.map((o) => fetchWebStreamsFromOrigin(ctx, api, o, path, playback)));
   let hit = replies.find(Boolean);
+  // a page cannot send the movie-page Referer: the gateway (user's connection) first, then the site's Function
+  if (!hit) { const viaGw = await fetchGatewayWebStreams(ctx, api, path, playback); if (viaGw) hit = { origin: origins[0], streams: viaGw }; }
   if (!hit) { const edge = await fetchEdgeWebStreams(ctx, api, path, playback); if (edge) hit = { origin: origins[0], streams: edge }; }
   if (!hit) return [];
   const base = siteHeaders(hit.origin, path, playback.subjectId);
@@ -608,7 +640,17 @@ export async function diagnose(ctx) {
 /** Settings -> Test connection: a real lookup for a known film, every stage written down (copy it into a bug report). */
 export async function trace(ctx, meta = { type: 'movie', tmdbId: '27205', title: 'Inception', originalTitle: 'Inception', year: '2010', rating: 8.4 }) {
   const log = [];
-  try { log.push(`streams found: ${(await lookup(meta, ctx, log)).length}`); } catch (e) { if (isAbortErr(e)) throw e; log.push(`stopped: ${e.message}`); }
+  try {
+    const found = await lookup(meta, ctx, log);
+    log.push(`streams found: ${found.length}`);
+    // can a browser fetch the file itself (no Referer, own Origin)? two bytes are enough to tell
+    if (found[0]) {
+      let host = '?';
+      try { host = new URL(found[0].url).host; } catch { /* keep ? */ }
+      const r = await ctx.response(found[0].url, { headers: { Range: 'bytes=0-1' } });
+      log.push(`media probe ${host}: ${r ? `HTTP ${r.status} ${(r.headers.get('content-type') || '').split(';')[0]}` : 'blocked or unreachable (no CORS reply)'}`.trim());
+    }
+  } catch (e) { if (isAbortErr(e)) throw e; log.push(`stopped: ${e.message}`); }
   return log;
 }
 const isAbortErr = (e) => !!e && (e.name === 'AbortError' || e.name === 'TimeoutError');
