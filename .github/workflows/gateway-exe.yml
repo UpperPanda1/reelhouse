@@ -35,4 +35,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/gateway/raftv-gateway.exe dist/gateway/raftv-gateway.exe.sha256 --title "RafTV gateway $GITHUB_REF_NAME" --notes "Double-click raftv-gateway.exe, then enter the address and token it shows in RafTV > Settings > Connection. Windows may warn about an unknown publisher (unsigned): More info > Run anyway. Allow it on Private networks when the firewall asks."
+          gh release create "$GITHUB_REF_NAME" dist/gateway/raftv-gateway.exe dist/gateway/raftv-gateway.exe.sha256 --title "RafTV gateway $GITHUB_REF_NAME" --notes "Double-click raftv-gateway.exe, then enter the address and token it shows in RafTV > Settings > Connection. Windows may warn about an unknown publisher (unsigned): More info > Run anyway. Allow it on Private networks when the firewall asks. It writes nothing to disk; the token is derived from this PC, so it stays the same after a restart."

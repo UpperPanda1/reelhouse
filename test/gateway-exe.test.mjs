@@ -51,17 +51,27 @@ const b64url = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 
 test.before(() => { execFileSync(process.execPath, [path.join(root, 'scripts', 'build-gateway-exe.mjs'), '--bundle-only'], { cwd: root, stdio: 'ignore' }); });
 
-test('packaged gateway: first start writes its settings (random token, LAN, RafTV site only); later starts reuse them', async () => {
+test('packaged gateway: writes nothing to disk; the token is derived (same after a restart); a user-made settings file is only read', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rgw-'));
   const a = await start(dir, { HOST: '127.0.0.1', PORT: '0' });
   a.child.kill();
-  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'raftv-gateway.json'), 'utf8'));
-  assert.equal(saved.host, '0.0.0.0'); assert.equal(saved.port, 8787); assert.deepEqual(saved.allowedOrigins, [SITE]);
-  assert.match(saved.token, /^[A-Za-z0-9_-]{16}$/);
-  assert.equal(a.token, saved.token);
+  assert.deepEqual(fs.readdirSync(dir), [], 'no file created');
+  assert.match(a.token, /^[A-Za-z0-9_-]{16}$/);
+  assert.match(a.out, /Allowed site\(s\): https:\/\/raftv\.pages\.dev/);
   const b = await start(dir, { HOST: '127.0.0.1', PORT: '0' });
   b.child.kill();
-  assert.equal(b.token, saved.token, 'same token after a restart (the phone keeps working)');
+  assert.equal(b.token, a.token, 'same token after a restart (the phone keeps working), with nothing stored');
+  // a settings file the user made is honoured and left untouched
+  const file = path.join(dir, 'raftv-gateway.json');
+  const mine = JSON.stringify({ token: 'my-own-token-123', allowedOrigins: ['https://example.org'] });
+  fs.writeFileSync(file, mine);
+  const before = fs.statSync(file).mtimeMs;
+  const c = await start(dir, { HOST: '127.0.0.1', PORT: '0' });
+  c.child.kill();
+  assert.equal(c.token, 'my-own-token-123');
+  assert.match(c.out, /Allowed site\(s\): https:\/\/example\.org/);
+  assert.equal(fs.readFileSync(file, 'utf8'), mine); assert.equal(fs.statSync(file).mtimeMs, before);
+  assert.deepEqual(fs.readdirSync(dir), ['raftv-gateway.json']);
 });
 
 test('packaged gateway: everything the site uses works through it (health, token, CORS, lookups with Referer, video Range, HLS rewrite)', async () => {

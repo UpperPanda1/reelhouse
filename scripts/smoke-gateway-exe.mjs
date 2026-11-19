@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Starts the BUILT gateway program (dist/gateway/raftv-gateway[.exe]) and checks what the site relies on:
-// it prints the address and token, /health answers, requests without the token are refused, and only the RafTV site
-// may read replies. Used in CI on Windows before a release is published.  node scripts/smoke-gateway-exe.mjs [path]
+// it prints the address and token, /health answers, requests without the token are refused, only the RafTV site
+// may read replies, and it writes no file. Used in CI on Windows before a release is published.  node scripts/smoke-gateway-exe.mjs [path]
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,8 +35,10 @@ child.stdout.on('data', async (d) => {
     if (pre.headers.get('access-control-allow-origin') !== 'https://raftv.pages.dev') return fail('site origin not allowed');
     const evil = await fetch(m[1] + '/p', { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } });
     if (evil.headers.get('access-control-allow-origin')) return fail('foreign origin allowed');
-    if (!fs.existsSync(path.join(dir, 'raftv-gateway.json'))) return fail('settings file not written next to the program');
-    console.log(`OK ${path.basename(exe)}: started, health, token enforced, only the site allowed, settings file written\n${out}`);
+    // it must not write anything: the folder holds only the program itself
+    const files = fs.readdirSync(dir);
+    if (files.length !== 1) return fail('files written next to the program: ' + files.join(', '));
+    console.log(`OK ${path.basename(exe)}: started, health, token enforced, only the site allowed, nothing written to disk\n${out}`);
     child.kill();
     process.exit(0);
   } catch (e) { fail(e.message); }
