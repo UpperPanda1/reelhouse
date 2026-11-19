@@ -673,7 +673,9 @@ export async function search(meta, ctx) {
   const label = `${meta.title}${q.isTv ? ` S${pad2(q.season)}E${pad2(q.episode)}` : meta.year ? ` (${meta.year})` : ''}`;
   return list.map((c) => {
     const stream = makeStream({ provider: id, providerName: `${name} (${toAudioDisplayName(c.language)})`, url: c.url, quality: c.resolution, filename: label, headers: c.headers, container: CONTAINER[c.format] });
-    stream.direct = true;
+    // not `direct`: the video server checks for a MovieBox Referer (measured 19 Nov 2026: 429 without it, a different
+    // refusal with it from a blocked region), which a <video> cannot send. With a gateway, net.mediaUrl() sends video and
+    // downloads through it with these headers (Referer and User-Agent are on its forwarding list); without one, direct.
     // the web API names the real codec (h264 / hevc): better than guessing from the URL ("/h265/")
     if (c.codec === 'hevc' || c.codec === 'h265') stream.info = { ...stream.info, video: 'hevc', codecLabel: 'H.265' };
     else if (c.codec === 'h264' || c.codec === 'avc') stream.info = { ...stream.info, video: 'avc', codecLabel: 'H.264' };

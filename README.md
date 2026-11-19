@@ -161,7 +161,7 @@ Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a
 | DhakaFlix, Circle FTP, FlixHub | lookups and video (they are BDIX servers) |
 | Hexion | lookups; video comes straight from the file host |
 | Fendrix | nothing, except its video in browsers without built-in HLS (Firefox) |
-| Mavonyx | only the request that lists the real files (it needs a Referer a browser cannot send, and MovieBox refuses Cloudflare); token, search and video go direct |
+| Mavonyx | the request that lists the real files, and the video (both need a MovieBox Referer a browser cannot send; MovieBox refuses Cloudflare); token and search go direct |
 
 **With Node instead:**
 

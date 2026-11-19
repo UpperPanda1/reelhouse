@@ -243,7 +243,7 @@ test('mavonyx: search() builds app streams: container from the format, language 
   assert.equal(dash.provider, 'mavonyx');
   assert.equal(dash.providerName, 'Mavonyx (English)');
   assert.equal(dash.quality, '2160p');
-  assert.equal(dash.direct, true);
+  assert.equal(dash.direct, undefined, 'video may go through the gateway (it needs a MovieBox Referer)');
   assert.equal(dash.signedCookie, true);
   const hls = byUrl['https://cdn.test/h/111-1080.m3u8'];
   assert.equal(hls.container, 'm3u8');
@@ -262,13 +262,25 @@ test('mavonyx: invalid input is rejected without a request', async () => {
   }
 });
 
-test('mavonyx: goes straight from the browser even with a gateway; cancelling aborts the lookup (no swallowed AbortError)', async () => {
+test('mavonyx: lookups go straight from the browser even with a gateway; cancelling aborts the lookup (no swallowed AbortError)', async () => {
   const f = upstream();
   const net = createNet(() => ({ gatewayUrl: 'http://127.0.0.1:8090' }), f);
   assert.equal(net.mode(mx), 'direct');
   const streams = await mx.search(META.movie, makeCtx(net, mx));
   assert.ok(streams.length > 0 && f.calls.every((c) => !c.url.startsWith('http://127.0.0.1')));
-  assert.equal(net.mediaUrl(streams[0], { player: true }), streams[0].url);
+  // video (and downloads) go through the gateway with the stream's MovieBox Referer: the video server checks it
+  // (measured 19 Nov 2026: 429 without, a different refusal with it); without a gateway the URL stays direct
+  for (const s of streams) {
+    const u = new URL(net.mediaUrl(s, { player: true }));
+    assert.equal(u.origin + u.pathname, 'http://127.0.0.1:8090/s');
+    assert.equal(u.searchParams.get('u'), s.url);
+    const h = JSON.parse(Buffer.from(u.searchParams.get('h'), 'base64url').toString());
+    // the original's Referer: the movie page on the host that answered (the title's site, or h5-api)
+    assert.match(h.Referer, /^https:\/\/(site\.test|h5-api\.aoneroom\.com)\/movies\/[\w-]+\?id=\d+&type=\/movie\/detail/);
+    assert.ok(h['User-Agent']);
+  }
+  assert.equal(new URL(net.mediaUrl(streams[0], { download: true, filename: 'x.mp4' })).searchParams.get('dl'), '1');
+  assert.equal(createNet(() => ({}), f).mediaUrl(streams[0], { player: true }), streams[0].url, 'no gateway: direct');
   const ctrl = new AbortController();
   const slow = async (url, init) => { await new Promise((r, j) => { init.signal.addEventListener('abort', () => j(init.signal.reason)); }); };
   const p = resolveStreams(META.movie, { net: direct(slow), signal: ctrl.signal, enabled: { mavonyx: true, 'bdix-df': false, 'bdix-cf': false, 'bdix-fh': false, fendrix: false, hexion: false } });
