@@ -43,7 +43,7 @@ export function watchView({ root, route, signal }) {
   document.addEventListener('close', refocus, true);
   signal.addEventListener('abort', () => { document.removeEventListener('close', refocus, true); if (player) player.destroy(); subBlobs.forEach((u) => URL.revokeObjectURL(u)); });
 
-  function showStageError(node) { mount(stage, h('div', { class: 'loading' }, node)); }
+  function showStageError(node) { mount(stage, h('div', { class: 'loading msg' }, node)); }
 
   // ---------------- fallback handling ----------------
   function nextCandidate({ strict }) {

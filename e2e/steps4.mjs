@@ -324,6 +324,9 @@ export async function steps4(ctx) {
       await waitFor(() => page2.$('.pstat .chip[data-provider="mavonyx"]:not([data-state="start"])'), { what: 'mavonyx chip' });
       assert.equal(await text(page2, '.pstat .chip[data-provider="mavonyx"]'), 'Mavonyx: no match'); // the token request itself succeeded
       assert.ok(seen2.some((x) => /search\/v2 signed no-auth/.test(x)), 'token not readable, so sent without it: ' + seen2.join(' | '));
+      // the "No sources found" message must not spill out of the 16:9 stage over the title bar (phone)
+      const fit = await page2.evaluate(() => { const l = document.querySelector('.stage .loading'); const st = document.querySelector('.stage').getBoundingClientRect(); const r = l.getBoundingClientRect(); return { over: l.scrollHeight - l.clientHeight, top: r.top - st.top, bottom: st.bottom - r.bottom }; });
+      assert.ok(fit.over <= 1 && fit.top >= 0 && fit.bottom >= 0, `message fits the stage: ${JSON.stringify(fit)}`);
       await shot(page2, 'mavonyx-hidden-token-phone');
     } finally { await page2.close(); }
   });

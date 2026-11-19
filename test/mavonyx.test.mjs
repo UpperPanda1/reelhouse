@@ -142,8 +142,8 @@ function upstream({ expire = false, region = false } = {}) {
 }
 
 /** Runs the original scraper file unchanged; `fetch` is the only host capability it uses. */
-async function runReference(f, args) {
-  const sandbox = { fetch: f, module: { exports: {} }, console };
+async function runReference(f, args, settings) {
+  const sandbox = { fetch: f, module: { exports: {} }, console, ...(settings ? { SCRAPER_SETTINGS: settings } : {}) };
   vm.runInNewContext(readFileSync(REF, 'utf8'), sandbox, { filename: 'mavonyx.js' });
   const out = await sandbox.module.exports.getStreams(...args);
   // JSON round trip: objects built inside the vm carry another realm's prototypes, which deepStrictEqual rejects
@@ -281,4 +281,23 @@ test('mavonyx: cancelling while the stream lists are loading reports cancelled, 
   const only = Object.fromEntries(PROVIDERS.map((p) => [p.id, p.id === 'mavonyx']));
   const r = await resolveStreams(META.movie, { net: direct(f), signal: ctrl.signal, enabled: only });
   assert.equal(r.status.mavonyx.state, 'cancelled');
+});
+
+test('mavonyx parity with non-default settings: audio-track, resolution and subtitle toggles act like the original', async () => {
+  // the original's keys and string/boolean forms: 720p on, 2160p off, Hindi off, Tamil on, captions off
+  const SETTINGS = { res_720p: true, res_2160p: 'false', dub_hindi_dub: false, dub_tamil_dub: 'true', subtitles: false };
+  const fr = upstream();
+  const ref = await runReference(fr, ARGS.movie, SETTINGS);
+  const fp = upstream();
+  const saved = { ...mx.settings };
+  Object.assign(mx.settings, SETTINGS);
+  try {
+    const port = await mx.lookup(META.movie, makeCtx(direct(fp), mx));
+    assert.deepEqual(port.map(mx.toReference), ref);
+    assert.deepEqual(signedOrApi(fp.calls), signedOrApi(fr.calls));
+    assert.ok(port.some((c) => c.resolution === '720p') && !port.some((c) => c.resolution === '2160p'));
+    assert.ok(!fp.calls.some((c) => /subjectId=121\b/.test(c.url)), 'Hindi track never requested');
+    assert.ok(fp.calls.some((c) => /play-info\?subjectId=122\b/.test(c.url)), 'Tamil track requested');
+    assert.ok(!fp.calls.some((c) => c.url.includes('captions')), 'no caption requests');
+  } finally { for (const k of Object.keys(mx.settings)) delete mx.settings[k]; Object.assign(mx.settings, saved); }
 });
