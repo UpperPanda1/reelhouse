@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS = {
   subStyle: { size: 100, color: '#ffffff', bg: 'shadow', bottom: 6 },
   autoNext: true,
   preferCompatible: true, // pick the best source the browser can most likely play
+  playIn: 'browser', // 'browser' = built-in player, 'mpv' = hand the video to mpv on this computer (public/js/mpv.js); device-only
 };
 
 const MAX_HISTORY = 40;

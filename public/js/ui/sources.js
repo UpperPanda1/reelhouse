@@ -1,10 +1,11 @@
 // The ONLY place BDIX providers get queried, and only after the user clicks Play or Download.
-import { h, mount, sanitizeFilename, copyText } from '../util.js';
+import { h, mount, sanitizeFilename, copyText, progressKey } from '../util.js';
 import { resolveStreams, PROVIDERS } from '../providers/index.js';
 import { net, caps } from '../core.js';
 import { store } from '../store.js';
 import { rank, sourceLabel, filenameFor, externalLinks, m3uPlaylist } from '../streams.js';
 import { openSheet, icon, toast } from './components.js';
+import { mpvLink } from '../mpv.js';
 
 const CACHE_MS = 10 * 60_000;
 const cache = new Map();
@@ -13,11 +14,12 @@ export const metaKey = (m) => `${m.type}:${m.tmdbId}:${m.season || ''}:${m.episo
 export async function lookupSources(meta, { signal, onProgress, force = false, settleMs = 0 } = {}) {
   const s = store.settings();
   const gw = !!String(s.gatewayUrl || '').trim();
-  const key = metaKey(meta) + (gw ? '|gw' : ''); // ranking depends on the gateway (Fendrix HLS without built-in HLS)
+  const mpv = s.playIn === 'mpv';
+  const key = metaKey(meta) + (gw ? '|gw' : '') + (mpv ? '|mpv' : ''); // ranking depends on the gateway (Fendrix HLS without built-in HLS) and on mpv
   const hit = cache.get(key);
   if (!force && hit && Date.now() - hit.t < CACHE_MS) return hit.out;
   const res = await resolveStreams(meta, { net, enabled: s.providers, signal, onProgress, compat: s.compat, settleMs });
-  const out = { streams: rank(res.streams, { ...caps(), gateway: gw }, { preferCompatible: s.preferCompatible }), status: res.status, partial: res.partial };
+  const out = { streams: rank(res.streams, { ...caps(), gateway: gw, mpv }, { preferCompatible: s.preferCompatible }), status: res.status, partial: res.partial };
   if (!(signal && signal.aborted) && out.streams.length && !out.partial) cache.set(key, { t: Date.now(), out });
   return out;
 }
@@ -74,7 +76,7 @@ export function guidance(status, meta, { retry } = {}) {
 
 const copy = (text) => copyText(text).then((ok) => (ok ? toast('Link copied') : toast('Could not copy. Long-press the download link instead.', { error: true })));
 
-function ticket(stream, { mode, title, onPlay, selectedId, first }) {
+function ticket(stream, { mode, title, onPlay, selectedId, first, mpvStart }) {
   const q = stream.quality && stream.quality !== 'Unknown' && stream.quality !== 'auto' ? stream.quality : 'Auto';
   const info = stream.info || {};
   const tags = [stream.sizeLabel, info.source, info.hdr, info.dv ? 'Dolby Vision' : '', info.codecLabel, info.audioLabel, info.tenBit ? '10-bit' : '', info.imax ? 'IMAX' : '', ...(info.langs || [])].filter(Boolean);
@@ -89,9 +91,12 @@ function ticket(stream, { mode, title, onPlay, selectedId, first }) {
     ...ext.map((l) => h('a', { class: 'btn small', href: l.href }, icon('external'), `Open in ${l.label}`)),
     h('a', { class: 'btn small', href: 'data:audio/x-mpegurl;charset=utf-8,' + encodeURIComponent(m3uPlaylist(playUrl, title)), download: sanitizeFilename(title) + '.m3u' }, icon('external'), 'Playlist (.m3u) for VLC / mpv'));
   const pri = first ? ' primary' : '';
+  // mpv (Settings, Play in): the link carries the file's own address, so mpv needs no gateway once it is open
   const primary = mode === 'download'
     ? h('a', { class: `btn small${pri}`, href: net.mediaUrl(stream, { download: true, filename: name }), download: name, target: '_blank', rel: 'noopener noreferrer' }, icon('download'), 'Download')
-    : h('button', { class: `btn small${selectedId === stream.id ? ' primary' : pri}`, type: 'button', onClick: () => onPlay && onPlay(stream) }, icon('play'), selectedId === stream.id ? 'Playing' : 'Play');
+    : mpvStart != null
+      ? h('a', { class: `btn small${pri}`, href: mpvLink(stream, { title, start: mpvStart }), dataset: { mpv: '1' } }, icon('play'), 'Open in mpv')
+      : h('button', { class: `btn small${selectedId === stream.id ? ' primary' : pri}`, type: 'button', onClick: () => onPlay && onPlay(stream) }, icon('play'), selectedId === stream.id ? 'Playing' : 'Play');
   return h('li', { class: `ticket${selectedId === stream.id ? ' sel' : ''}`, dataset: { provider: stream.provider, level: play.level } },
     h('div', { class: 'stub' }, h('b', null, q), h('small', null, stream.container !== 'unknown' ? stream.container.toUpperCase() : '')),
     h('div', { class: 'tbody' },
@@ -106,7 +111,8 @@ function ticket(stream, { mode, title, onPlay, selectedId, first }) {
 /** Renders the result list into `container`. */
 export function renderResult(container, result, { mode, meta, title, onPlay, selectedId, retry }) {
   const nodes = [providerChips(result.status)];
-  if (result.streams.length) nodes.push(h('ul', { class: 'tickets' }, result.streams.map((s, i) => ticket(s, { mode, title, onPlay, selectedId, first: i === 0 }))));
+  const mpvStart = mode === 'play' && store.settings().playIn === 'mpv' && meta ? store.resumePoint(progressKey(meta.type, meta.tmdbId, meta.season, meta.episode)) : null;
+  if (result.streams.length) nodes.push(h('ul', { class: 'tickets' }, result.streams.map((s, i) => ticket(s, { mode, title, onPlay, selectedId, first: i === 0, mpvStart }))));
   else { const g = guidance(result.status, meta, { retry }); if (g) nodes.push(g); }
   mount(container, ...nodes);
 }

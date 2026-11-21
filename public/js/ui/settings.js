@@ -99,7 +99,19 @@ export function openSettings() {
       });
       return h('label', null, input, langName(l));
     }));
+    const playIn = h('select', { 'aria-label': 'Play videos in', id: 'play-in' }, [['browser', 'This browser'], ['mpv', 'mpv on this computer']].map(([v, t]) => h('option', { value: v, selected: v === s.playIn }, t)));
+    playIn.addEventListener('change', () => { store.saveSettings({ playIn: playIn.value }); toast(playIn.value === 'mpv' ? 'Videos will open in mpv' : 'Videos will play in this browser'); });
+    const code = (t) => h('code', { class: 'code' }, t);
+    const mpvHelp = h('details', { style: { marginTop: '4px' } }, h('summary', { style: { cursor: 'pointer' } }, 'How to set up mpv'),
+      h('ol', { class: 'stack', style: { marginTop: '8px', color: 'var(--dim)', fontSize: '14px', paddingLeft: '20px' } },
+        h('li', null, 'Install mpv (mpv.io). Either add it to PATH, or put its full path in ', code('raftv-gateway.json'), ' next to the gateway program: ', code('{"mpvPath": "C:\\\\mpv\\\\mpv.exe"}'), '.'),
+        h('li', null, 'Once, in a Command Prompt in the gateway\u2019s folder: ', code('raftv-gateway.exe --mpv-register'), '. This lets raftv-mpv:// links open mpv. Undo with ', code('--mpv-unregister'), '.'),
+        h('li', null, 'Choose \u201cmpv on this computer\u201d above. Start the gateway, press Play, then Open in mpv. Allow the browser to open the link.'),
+        h('li', null, 'When mpv is playing, you can close the gateway: mpv loads the video straight from the server.')),
+      h('p', { style: { color: 'var(--faint)', fontSize: '13px', marginTop: '8px' } }, 'Opening mpv writes nothing to disk. Resume works when you start in mpv, but mpv does not report back where you stopped; subtitles found here and the next episode stay in the browser player.'));
     const playback = h('section', { class: 'set-group' }, h('h3', null, 'Playback'),
+      h('div', { class: 'row' }, h('label', { for: 'play-in' }, 'Play videos in'), playIn),
+      mpvHelp,
       toggleRow('Prefer sources my browser can play', 'Ranks HEVC and Dolby/DTS audio files lower, since browsers often cannot decode them.', s.preferCompatible, (v) => store.saveSettings({ preferCompatible: v })),
       toggleRow('Play next episode automatically', null, s.autoNext, (v) => store.saveSettings({ autoNext: v })),
       toggleRow('Load subtitles automatically', 'Uses OpenSubtitles. The first language below is tried first.', s.autoSubs, (v) => store.saveSettings({ autoSubs: v })),

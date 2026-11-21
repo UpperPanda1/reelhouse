@@ -41,9 +41,9 @@ Do not read it end to end. Jump by task:
 | Data | `public/js/api.js`, `store.js`, `util.js` | `api.js` = our `/api/*` client with cache and stale-while-revalidate; `store.js` = everything in `localStorage` (prefix `rh:`): settings, `library` (history, lists, tombstones), progress |
 | Accounts | `lib/accounts.js` (server), `public/js/account.js` (client + sync engine), `public/js/sync-merge.js`, `public/js/ui/account.js`, `public/js/ui/admin.js`, `dev/d1-sqlite.mjs` | D1 binding `DB`; no `DB` = accounts off. See IMPLEMENTATION section 18 |
 | Providers | `public/js/providers/{df,cf,fh,fn,hx,mx,mx-api,aesgcm,common,index}.js`, `public/js/net.js` | df/cf/fh = BDIX servers (DhakaFlix, Circle FTP, FlixHub), fn/hx/mx = online sources (Fendrix, Hexion, Mavonyx); `mx.js` is a stub that imports `mx-api.js` (the signed MovieBox lookup) on first use; `aesgcm.js` = Fendrix decryption fallback without WebCrypto; `net.js` = direct / gateway / edge transport. Reference scrapers: `cloudstream-main/cloudstream/providers/` |
-| Playback | `public/js/player.js`, `streams.js`, `subs.js` | `streams.js` ranks and predicts playability; `player.js` wraps ArtPlayer and monitors health; `subs.js` decodes and styles subtitles |
+| Playback | `public/js/player.js`, `streams.js`, `subs.js`, `mpv.js` | `streams.js` ranks and predicts playability; `player.js` wraps ArtPlayer and monitors health; `subs.js` decodes and styles subtitles; `mpv.js` builds `raftv-mpv://` links (Settings, Play videos in: mpv) |
 | Server | `functions/api/[[path]].js` (entry), `lib/api.js` (router), `lib/tmdb.js`, `lib/subs.js`, `lib/mavonyx.js` (`/api/mavonyx/play`: MovieBox web streams with the Referer a page cannot send) | all logic is in `lib/` and shared with the dev server and tests |
-| Gateway | `gateway/bdix-gateway.mjs`, `gateway/exe-main.mjs`, `scripts/build-gateway-exe.mjs`, `scripts/smoke-gateway-exe.mjs`, `.github/workflows/gateway-exe.yml` | optional proxy run on the user's network; zero dependencies. `raftv-gateway.exe` = the unchanged gateway + a launcher (**writes nothing**: token derived from the PC's MachineGuid + user name, optional read-only `raftv-gateway.json`, listens on 127.0.0.1 only (owner: no phone/network access), RafTV origin only) packed as a Node single executable; built and smoke-tested on Windows by GitHub Actions, released on a `gateway-v*` tag |
+| Gateway | `gateway/bdix-gateway.mjs`, `gateway/exe-main.mjs`, `scripts/build-gateway-exe.mjs`, `scripts/smoke-gateway-exe.mjs`, `.github/workflows/gateway-exe.yml` | optional proxy run on the user's network; zero dependencies. `raftv-gateway.exe` = the unchanged gateway + a launcher (**writes nothing**: token derived from the PC's MachineGuid + user name, optional read-only `raftv-gateway.json`, listens on 127.0.0.1 only (owner: no phone/network access), RafTV origin only) packed as a Node single executable; built and smoke-tested on Windows by GitHub Actions, released on a `gateway-v*` tag. `gateway/mpv-handler.mjs`: the same program's `--mpv-open <link>` (starts mpv with the file's own address and exits, never starts the gateway, writes nothing), `--mpv-register`/`--mpv-unregister` (HKCU `raftv-mpv` keys) |
 | Cloudflare config | `public/_headers` (CSP), `public/_routes.json`, `wrangler.toml` | `_routes.json` limits Functions to `/api/*` |
 | Vendor | `public/vendor/*` (committed), `scripts/build-vendor.mjs` | versioned file names; served `immutable`; rebuild with `npm run build:vendor` |
 | Tests | `test/*.test.mjs`, `test/fixtures/*`, `e2e/*` | see `VERIFICATION.md` |
@@ -66,6 +66,7 @@ Do not read it end to end. Jump by task:
 4. **Rank** (`streams.js`): `playability()` from file-name codec tokens and `browserCaps()`; `rank()` orders playable → risky → unlikely, then resolution, container (mp4 > mov > mkv), provider. The default source is the best one the browser can probably play.
 5. **Play** (`player.js`): ArtPlayer is imported lazily from `/vendor/` (hls.js only for `.m3u8`). The controller exposes `switchTo, addSubtitle, selectSubtitle, focus, applySubStyle, destroy`.
 6. **Health monitor** (armed when the player is created, NOT on ArtPlayer's `ready`, which is the first `canplay` and never comes for a dead source): after metadata `videoWidth === 0` → `video-unsupported`; after 2.5 s playing with no decoded audio → `audio-unsupported`; media error, fatal hls.js error (these never fire `<video>` `error`) or 25 s without metadata → `error`/`timeout`. `watch.js: onIssue` auto-switches to the next non-bad source for video problems; with none left, `player.fail()` stops the spinner and a banner gives the known reason plus external-player links; silent audio gets a banner.
+6b. **mpv instead** (`settings.playIn === 'mpv'`): no player; `watch.js: showMpv` and the Sources tickets link `raftv-mpv://play?d=...` (`mpv.js`) with the stream's **own** URL and headers (never `net.mediaUrl`, so the gateway can be closed after the search), ranked with `caps.mpv` (everything playable). The link is untrusted input on the PC side (`gateway/mpv-handler.mjs`: http(s) only, no credentials, header name/value checks, one argv entry per value, no shell, `--` before the URL). The watch page is lazy-loaded (`main.js`), which keeps the home page at about 144 KB of JS.
 7. **Resume**: progress saved every 5 s, on `video:pause`, on destroy and on `pagehide` (`store.saveProgress`); resume only if past 30 s and before 93 %.
 8. **Subtitles**: `/api/subs` → `/api/sub` → `decodeBytes` → `srtToVtt` → blob URL → `art.subtitle.switch`. Appearance prefs in `settings.subStyle`.
 
@@ -89,7 +90,7 @@ Facts to keep in mind: browsers play MOV and MKV (H.264/AAC) fine regardless of 
 
 * Never remove an item from the library by deleting it alone: use the store methods, which write a **tombstone** (`removeHistory`, `removeFromList`, `deleteList`, `clearHistory`); otherwise sync brings it back from another device.
 * `sync-merge.js` must stay commutative, associative and idempotent (property test in `test/sync-merge.test.mjs`).
-* Device-only settings (gateway URL/token) must not enter `SYNCED_SETTINGS`.
+* Device-only settings (gateway URL/token, `playIn`) must not enter `SYNCED_SETTINGS`.
 * Account routes are the only non-GET API routes; each needs JSON, a same-origin `Origin`, and a test (including role and CSRF checks). Never return password hashes, session tokens or invite codes after creation.
 
 ## Rules for any change
@@ -117,7 +118,7 @@ Network reach varies by session: earlier ones reached only npm, PyPI, GitHub and
 ## Useful commands
 
 ```bash
-npm ci && npm test                         # install and run 166 unit/integration tests
+npm ci && npm test                         # install and run 177 unit/integration tests
 npm run dev                                # local site (needs TMDB_API_KEY in .dev.vars)
 npm run e2e:media && npm run e2e           # browser suite (needs ffmpeg; FFMPEG=... if not on PATH)
 npm run e2e -- subtitles                   # run only matching steps

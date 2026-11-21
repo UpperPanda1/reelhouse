@@ -21,7 +21,7 @@ import { pathToFileURL } from 'node:url';
 
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
 const DEFAULT_ALLOW_PRIVATE = ['172.16.50.12', '172.16.50.14']; // DhakaFlix, same as the CloudStream extension
-const DEFAULT_REFERERS = { 'new.circleftp.net': 'http://new.circleftp.net/', '15.1.1.50': 'http://new.circleftp.net/', 'flixhub.net': 'https://flixhub.net/', 'www.flixhub.net': 'https://flixhub.net/' };
+export const DEFAULT_REFERERS = { 'new.circleftp.net': 'http://new.circleftp.net/', '15.1.1.50': 'http://new.circleftp.net/', 'flixhub.net': 'https://flixhub.net/', 'www.flixhub.net': 'https://flixhub.net/' };
 const MIME = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', mkv: 'video/x-matroska', webm: 'video/webm', avi: 'video/x-msvideo', ts: 'video/mp2t', m3u8: 'application/vnd.apple.mpegurl', mpd: 'application/dash+xml', srt: 'text/plain', vtt: 'text/vtt' };
 const FORWARD_FROM_CLIENT_ENVELOPE = new Set(['user-agent', 'referer', 'accept', 'accept-language', 'content-type']);
 

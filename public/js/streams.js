@@ -27,6 +27,8 @@ export function browserCaps(video = typeof document !== 'undefined' ? document.c
 
 /** @returns {{level:'ok'|'warn'|'bad', reasons:string[]}} */
 export function playability(stream, caps) {
+  // caps.mpv: the video goes to mpv (Settings, Play in), which plays every container, codec and DASH, and sends cookies
+  if (caps.mpv) return { level: 'ok', reasons: [] };
   const reasons = [];
   let level = 'ok';
   const bump = (l, why) => { reasons.push(why); if (LEVEL[l] > LEVEL[level]) level = l; };

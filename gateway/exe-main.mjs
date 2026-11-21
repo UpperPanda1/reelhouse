@@ -10,19 +10,20 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createGateway, loadConfig } from './bdix-gateway.mjs';
+import { mpvCommand, runMpvCommand } from './mpv-handler.mjs';
 
 export const CONFIG_NAME = 'raftv-gateway.json';
 export const DEFAULT_SITE = 'https://raftv.pages.dev';
 
-/** Folder the config file lives in: next to the .exe when packaged, else the current folder. */
-function configDir() {
+function packaged() {
   try {
     // node:sea exists in Node 20+; isSea() is true only inside the single executable
     const sea = process.getBuiltinModule ? process.getBuiltinModule('node:sea') : null;
-    if (sea && sea.isSea()) return path.dirname(process.execPath);
-  } catch { /* not packaged */ }
-  return process.cwd();
+    return !!(sea && sea.isSea());
+  } catch { return false; }
 }
+/** Folder the config file lives in: next to the .exe when packaged, else the current folder. */
+function configDir() { return packaged() ? path.dirname(process.execPath) : process.cwd(); }
 
 /** A per-PC secret that Windows/Linux already keep (read only; not visible on the network). '' if none is found. */
 function machineSecret() {
@@ -101,4 +102,17 @@ export function main() {
   return server;
 }
 
-main();
+/** --mpv-open <link> (started by Windows for a raftv-mpv:// link), --mpv-register, --mpv-unregister: see mpv-handler.mjs.
+ * These open mpv or edit the link registration and exit; the gateway is not started. */
+function mpvMain(c) {
+  const pause = (code) => { if (process.stdin.isTTY) { console.error('Press Enter to close.'); process.stdin.once('data', () => process.exit(code)); } else process.exitCode = code; };
+  const code = runMpvCommand(c, {
+    dir: configDir(), exe: process.execPath, script: packaged() ? undefined : path.resolve(process.argv[1] || ''),
+    log: (m) => console.log(m), onError: () => pause(1),
+  });
+  // keep the window readable when something went wrong or after (un)registering; a successful open closes at once
+  if (code !== 0 || c.cmd !== 'open') pause(code);
+}
+
+const mpv = mpvCommand(process.argv.slice(1));
+if (mpv) mpvMain(mpv); else main();

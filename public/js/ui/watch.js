@@ -7,7 +7,8 @@ import { fetchSubtitleList, loadSubtitleBlob, loadSourceSubtitle, vttBlobUrl, de
 import { icon, openSheet, toast } from './components.js';
 import { lookupSources, providerChips, guidance, openSources } from './sources.js';
 import { hrefWatch, hrefTitle } from '../router.js';
-import { externalLinks, m3uPlaylist, filenameFor } from '../streams.js';
+import { externalLinks, m3uPlaylist, filenameFor, sourceLabel } from '../streams.js';
+import { mpvLink } from '../mpv.js';
 import { BRAND } from '../brand.js';
 
 function nextEpisode(d, season, episode) {
@@ -130,6 +131,22 @@ export function watchView({ root, route, signal }) {
   const metaFor = () => ({ type, tmdbId: id, title: d.title, originalTitle: d.originalTitle, year: d.year, rating: d.rating, imdbId: d.imdbId || '', season, episode });
   const displayTitle = () => d.title + (type === 'tv' ? ` S${season}E${episode}` : d.year ? ` (${d.year})` : '');
 
+  // ---------------- mpv (Settings, Play in) ----------------
+  // No built-in player: the best source goes to mpv on this computer. The link holds the file's own address (not the
+  // gateway's), so the gateway is needed only for the search and can be closed once mpv plays.
+  function showMpv(stream) {
+    const start = store.resumePoint(key);
+    mount(stage, h('div', { class: 'loading msg mpv-ready', dataset: { mpvReady: '1' } }, h('div', null,
+      h('h2', null, 'Ready to play in mpv'),
+      h('p', null, stream.filename || sourceLabel(stream) || stream.providerName),
+      h('p', { style: { color: 'var(--dim)' } }, `From ${stream.providerName}`),
+      h('div', { class: 'actions', style: { justifyContent: 'center' } },
+        h('a', { class: 'btn primary', href: mpvLink(stream, { title: displayTitle(), start }), dataset: { mpv: '1' } }, icon('play'), start ? 'Resume in mpv' : 'Open in mpv'),
+        h('button', { class: 'btn', type: 'button', onClick: () => openSourcesSheet() }, icon('film'), 'Other sources')),
+      h('p', { style: { color: 'var(--dim)', fontSize: '14px', marginTop: '16px' } }, 'mpv loads the video straight from the server, so you can close the gateway once mpv is playing.'),
+      h('p', { style: { color: 'var(--faint)', fontSize: '13px' } }, 'Nothing opens? Set up mpv links once: Settings, Playback, How to set up mpv.'))));
+  }
+
   // ---------------- start ----------------
   async function startPlayer(first) {
     mount(stage);
@@ -169,14 +186,16 @@ export function watchView({ root, route, signal }) {
       paintChips();
       results = await lookupSources(metaFor(), { signal, settleMs: 1500, onProgress: (pid, ev, st) => { status[pid] = ev === 'done' ? st : { state: 'start' }; paintChips(); } });
       if (signal.aborted) return;
+      const toMpv = store.settings().playIn === 'mpv';
       mount(tools,
         h('button', { class: 'btn', type: 'button', onClick: openSourcesSheet }, icon('film'), 'Sources'),
-        h('button', { class: 'btn', type: 'button', onClick: () => player ? openSubtitleSheet() : toast('Start playback first') }, 'Subtitles'),
+        toMpv ? null : h('button', { class: 'btn', type: 'button', onClick: () => player ? openSubtitleSheet() : toast('Start playback first') }, 'Subtitles'),
         h('button', { class: 'btn', type: 'button', onClick: () => openSources({ meta: metaFor(), title: displayTitle(), mode: 'download' }) }, icon('download'), 'Download'));
       if (!results.streams.length) {
         showStageError(h('div', null, h('h2', null, 'No sources found'), providerChips(results.status), guidance(results.status, metaFor(), { retry: () => location.reload() })));
         return;
       }
+      if (toMpv) { showMpv(results.streams[0]); return; }
       await startPlayer(results.streams[0]);
     } catch (e) {
       if (e && e.name === 'AbortError') return;

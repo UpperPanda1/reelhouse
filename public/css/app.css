@@ -245,6 +245,9 @@ dialog.sheet[open] { animation: rise .18s ease-out; }
 .stage .loading h2 { color: var(--text); font-size: 20px; }
 /* a message (no sources, errors) can be taller than 16:9 on a phone: the stage grows instead of spilling over the title bar */
 .stage:has(> .msg) { display: grid; aspect-ratio: auto; max-height: none; min-height: min(56.25vw, calc(100dvh - var(--topbar-h) - 70px)); }
+/* "Play in mpv" panel: one column no wider than the stage, so long file names wrap on a phone */
+.stage .mpv-ready { grid-template-columns: minmax(0, 640px); justify-content: center; }
+.mpv-ready p { overflow-wrap: anywhere; }
 .stage > .loading.msg { position: static; }
 .spin { width: 28px; height: 28px; margin: 0 auto; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--lamp); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

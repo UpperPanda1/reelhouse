@@ -1,4 +1,5 @@
 import { video, currentFile, waitPlaying, text, hasText, clickByText } from './helpers.mjs';
+import { parseLink, mpvArgs } from '../gateway/mpv-handler.mjs';
 
 const ANDROID = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36';
 const IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
@@ -58,6 +59,63 @@ export async function steps3(ctx) {
       assert.equal(r.status, 206); assert.match(r.headers.get('content-disposition'), /^attachment; filename="The\.Matrix\.1999\.1080p\.WEB-DL\.x264\.AAC\.mp4"/);
       assert.equal((await r.arrayBuffer()).byteLength, 100);
       assert.equal((await fetch(href.replace('k=' + gw.token, 'k=wrong'))).status, 401);
+    } finally { await page.evaluate(() => localStorage.removeItem('rh:settings')).catch(() => {}); await page.close(); gw.close(); }
+  });
+
+  await step('mpv: "Play in mpv" searches through the gateway, then hands mpv the file\u2019s own address; the gateway can be closed', async () => {
+    const gw = await startGateway({ origin: app.origin });
+    const page = await b.newPage({ width: 1280, height: 900, label: 'mpv' });
+    try {
+      await open(page, '#/movie/603');
+      await page.evaluate(async (base) => { (await import('/js/providers/fh.js')).endpoints.base = base; (await import('/js/providers/hx.js')).endpoints.base = base; }, bdix.base);
+      await waitFor(() => page.$('.dinfo h1'), { what: 'details' });
+      await openSettings(page);
+      await page.type('input[aria-label="Gateway address"]', gw.url);
+      await page.type('input[aria-label="Gateway token"]', gw.token);
+      await clickByText(page, 'dialog.sheet .btn', /^Save$/);
+      await page.select('#play-in', 'mpv');
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('rh:settings')).playIn), 'mpv');
+      await page.evaluate(() => document.querySelector('dialog.sheet details summary') && [...document.querySelectorAll('dialog.sheet summary')].find((x) => /set up mpv/.test(x.textContent)).click());
+      await page.evaluate(() => document.getElementById('play-in').closest('.set-group').scrollIntoView());
+      await shot(page, 'settings-mpv');
+      await page.keyboard.press('Escape');
+      bdix.log.length = 0;
+      await page.click('.dinfo .btn.primary');
+      await page.waitForSelector('[data-mpv-ready] a[data-mpv]', { timeout: 40000 });
+      assert.ok(bdix.log.some((r) => r.method === 'POST'), 'the search went to the BDIX servers');
+      assert.equal(await page.$('video'), null, 'no built-in player in mpv mode');
+      assert.equal(await page.evaluate(() => [...document.querySelectorAll('.toolrow .btn')].some((x) => /Subtitles/.test(x.textContent))), false);
+      const href = await page.$eval('[data-mpv-ready] a[data-mpv]', (a) => a.getAttribute('href'));
+      const got = parseLink(href);
+      assert.ok(!href.includes(gw.token) && !got.url.startsWith(gw.url), 'no gateway address or token in the link: ' + got.url);
+      // mpv plays HEVC, so the 2160p HEVC file (ranked down for the browser) is the first choice here
+      assert.ok(got.url.startsWith(bdix.base) && /The\.Matrix\.1999\.2160p\..*x265/.test(got.url), got.url);
+      assert.deepEqual(mpvArgs(got).slice(-2), ['--', got.url]);
+      await shot(page, 'watch-mpv');
+      // the Sources sheet offers mpv for every source
+      await clickByText(page, '.toolrow .btn', /Sources/);
+      await page.waitForSelector('dialog.sheet[open] .ticket');
+      const tickets = await page.$$eval('dialog.sheet .ticket .tact > :first-child', (els) => els.map((e) => ({ text: e.textContent, href: e.getAttribute('href') || '' })));
+      assert.ok(tickets.length > 1 && tickets.every((t) => /Open in mpv/.test(t.text) && t.href.startsWith('raftv-mpv://play?d=')));
+      assert.ok(tickets.every((t) => !parseLink(t.href).url.startsWith(gw.url)));
+      // close the gateway; mpv's request (same URL and headers, straight to the server) still gets the video
+      gw.close();
+      await new Promise((r) => setTimeout(r, 200));
+      assert.ok(await fetch(gw.url + '/health').then(() => false, () => true), 'gateway is closed');
+      const r = await fetch(got.url, { headers: { range: 'bytes=0-99', ...(got.headers.referer ? { referer: got.headers.referer } : {}) } });
+      assert.equal(r.status, 206);
+      assert.equal((await r.arrayBuffer()).byteLength, 100);
+      // phone layout of the same screen
+      const phone = await b.newPage({ width: 390, height: 844, touch: true, label: 'mpv-phone' });
+      try {
+        await open(phone, '#/');
+        await phone.evaluate(() => localStorage.setItem('rh:settings', JSON.stringify({ playIn: 'mpv', providers: { 'bdix-fh': false, fendrix: false, hexion: false, mavonyx: false } })));
+        await open(phone, '#/watch/movie/603');
+        await phone.waitForSelector('[data-mpv-ready] a[data-mpv]', { timeout: 40000 });
+        const clipped = await phone.evaluate(() => [...document.querySelectorAll('[data-mpv-ready] h2, [data-mpv-ready] p, [data-mpv-ready] .btn')].filter((e) => { const r = e.getBoundingClientRect(); return r.left < 0 || r.right > 390; }).map((e) => e.textContent.slice(0, 40)));
+        assert.deepEqual(clipped, [], 'mpv panel fits a phone screen');
+        await shot(phone, 'watch-mpv-phone');
+      } finally { await phone.evaluate(() => localStorage.removeItem('rh:settings')).catch(() => {}); await phone.close(); }
     } finally { await page.evaluate(() => localStorage.removeItem('rh:settings')).catch(() => {}); await page.close(); gw.close(); }
   });
 

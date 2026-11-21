@@ -2,7 +2,8 @@
 // Starts the BUILT gateway program (dist/gateway/raftv-gateway[.exe]) and checks what the site relies on:
 // it prints the address and token, /health answers, requests without the token are refused, only the RafTV site
 // may read replies, and it writes no file. Used in CI on Windows before a release is published.  node scripts/smoke-gateway-exe.mjs [path]
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { mpvLink } from '../public/js/mpv.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -40,7 +41,34 @@ child.stdout.on('data', async (d) => {
     if (files.length !== 1) return fail('files written next to the program: ' + files.join(', '));
     console.log(`OK ${path.basename(exe)}: started, health, token enforced, only the site allowed, nothing written to disk\n${out}`);
     child.kill();
+    mpvChecks();
     process.exit(0);
   } catch (e) { fail(e.message); }
 });
 child.on('exit', (c) => fail('exited early with ' + c));
+
+// "Play in mpv": --mpv-open reads a site link and would start mpv with the file's own address (dry run: prints the
+// command instead); on Windows --mpv-register / --mpv-unregister add and remove the raftv-mpv:// registry keys (HKCU).
+function mpvChecks() {
+  const url = 'http://172.16.50.14/DHAKA-FLIX-14/a b.mkv';
+  const r = spawnSync(copy, ['--mpv-open', mpvLink({ url, headers: {} }, { title: 'T', start: 42 })], { cwd: dir, env: { ...process.env, RAFTV_MPV_DRY_RUN: '1' }, encoding: 'utf8', timeout: 15000 });
+  let got = null;
+  try { got = JSON.parse(r.stdout); } catch { /* checked below */ }
+  if (r.status !== 0 || !got || got.args.at(-1) !== new URL(url).href || got.args.at(-2) !== '--' || !got.args.includes('--start=42')) fail('--mpv-open: ' + r.status + ' ' + r.stdout + r.stderr);
+  const bad = spawnSync(copy, ['--mpv-open', 'raftv-mpv://play?d=bad'], { cwd: dir, env: { ...process.env, RAFTV_MPV_DRY_RUN: '1' }, encoding: 'utf8', timeout: 15000 });
+  if (bad.status === 0) fail('--mpv-open accepted a bad link');
+  if (process.platform === 'win32') {
+    const key = 'HKCU\\Software\\Classes\\raftv-mpv';
+    const reg = spawnSync(copy, ['--mpv-register'], { cwd: dir, encoding: 'utf8', timeout: 15000 });
+    if (reg.status !== 0) fail('--mpv-register: ' + reg.stdout + reg.stderr);
+    const cmd = execFileSync('reg', ['query', key + '\\shell\\open\\command', '/ve'], { encoding: 'utf8' });
+    if (!cmd.includes(`"${copy}" --mpv-open "%1"`)) fail('registry command: ' + cmd);
+    if (!execFileSync('reg', ['query', key, '/v', 'URL Protocol'], { encoding: 'utf8' }).includes('URL Protocol')) fail('URL Protocol value missing');
+    const un = spawnSync(copy, ['--mpv-unregister'], { cwd: dir, encoding: 'utf8', timeout: 15000 });
+    if (un.status !== 0) fail('--mpv-unregister: ' + un.stdout + un.stderr);
+    if (spawnSync('reg', ['query', key]).status === 0) fail('registry key still present after --mpv-unregister');
+  }
+  const files = fs.readdirSync(dir);
+  if (files.length !== 1) fail('mpv modes wrote files: ' + files.join(', '));
+  console.log(`OK mpv modes: link opened (dry run), bad link refused${process.platform === 'win32' ? ', raftv-mpv:// registered and removed' : ''}, nothing written to disk`);
+}

@@ -6,7 +6,6 @@ import { homeView } from './ui/home.js';
 import { searchView, listView, historyView } from './ui/browse.js';
 import { account } from './account.js';
 import { detailsView } from './ui/details.js';
-import { watchView } from './ui/watch.js';
 import { BRAND } from './brand.js';
 
 const root = $('#main');
@@ -14,6 +13,8 @@ let settingsOpen = null;
 // Settings (with the account screens) and the admin page load on first use: they are not needed to browse.
 const showSettings = async () => { if (settingsOpen && settingsOpen.el && settingsOpen.el.open) return; settingsOpen = { el: { open: true } }; try { settingsOpen = (await import('./ui/settings.js')).openSettings(); } catch (e) { settingsOpen = null; throw e; } };
 const adminView = (ctx) => import('./ui/admin.js').then((m) => { if (!ctx.signal.aborted) m.adminView(ctx); });
+// the watch page (with the player and subtitle code) loads on the first Play: it is not needed to browse
+const watchView = (ctx) => import('./ui/watch.js').then((m) => { if (!ctx.signal.aborted) m.watchView(ctx); });
 document.addEventListener('rh:settings', showSettings);
 
 const shell = buildShell({ onSettings: showSettings });

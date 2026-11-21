@@ -4,7 +4,7 @@
 
 ## Status
 
-* Built and tested: 166 unit and integration tests, 38 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
+* Built and tested: 177 unit and integration tests, 39 browser end-to-end steps (real Chromium, real gateway, real video files), 9 Cloudflare runtime checks (real `workerd`).
 * **Connection and playback fixes (Nov 19, 2026)**, from the owner's report "Fendrix: 1 found but never plays; Hexion and BDIX unreachable" and live checks against the deployment (`VERIFICATION.md` section 18):
   * *Endless spinner*: the player's watchdog was armed only after the first `canplay`, and hls.js failures were never reported. Without built-in HLS (Firefox, older Chrome) Fendrix's CDN refuses hls.js (it 404s any foreign `Origin`), so the page spun forever. Now the player gives up in about a second and explains (built-in HLS, gateway or external player).
   * *FlixHub is a BDIX server* (original: "FlixHub FTP: BDIX"); it was wrongly sent through the Cloudflare edge proxy (504). Now it is treated like DhakaFlix and Circle FTP.
@@ -15,6 +15,7 @@
 * **Accounts, lists, sync** (Nov 2026): invite-only accounts on Cloudflare D1, sign-in, password change, admin page (invites, users), named watch lists, history removal with Undo, and a merge-based sync of history/lists/resume positions/settings between devices. Unit, multi-device browser and real-`workerd`+D1 tests. Deploy steps: README *Accounts*.
 * **Not verified**: Mavonyx against the live API (region-gated from the sandbox: real stream URLs, formats, sign cookies and caption hosts unseen); a live D1 database on Cloudflare (local D1 in workerd only); the real BDIX servers (DhakaFlix, Circle FTP, FlixHub), TMDB and OpenSubtitles were unreachable during development (mocks used); the deployment `raftv.pages.dev` was only read (public GETs), nothing was deployed from a session; Fendrix playback in the owner's own browser; Firefox/Safari; real phones; https `pages.dev` with the gateway. See `VERIFICATION.md` section 14.
 * **Gateway as a Windows program** (`raftv-gateway.exe`, Nov 19, 2026): the unchanged gateway plus a small launcher (`gateway/exe-main.mjs`: writes nothing to disk, token derived from the PC's machine id and user name, optional read-only settings file, listens on this PC only (127.0.0.1), only the RafTV origin), packed with Node's single-executable feature (`npm run build:gateway`). GitHub Actions builds it on Windows, runs it (`scripts/smoke-gateway-exe.mjs`) and attaches it to a release on a `gateway-v*` tag. Tested: the bundled launcher with every gateway feature the site uses; a Linux build of the same program run and measured (0.04 s start, ~60 MB idle, ~100 MB streaming). Not run here: the Windows `.exe` itself (only in CI), SmartScreen.
+* **Play in mpv** (Nov 21, 2026): Settings → Playback → *Play videos in: mpv on this computer* (device-only). The search still uses the gateway; the watch page then offers *Open in mpv* (`raftv-mpv://` link with the file's own address and Referer/UA/cookies, `public/js/mpv.js`), so the gateway can be closed while mpv plays. On the PC, `raftv-gateway.exe --mpv-register` (once, HKCU registry) makes such links run `raftv-gateway.exe --mpv-open`, which checks the link (`gateway/mpv-handler.mjs`), starts mpv detached and exits: no gateway, nothing written. Verified: unit tests with mutation checks, E2E step 16b (gateway closed, the file still answers directly), the packaged Linux program with **real mpv 0.37** (Referer/UA/cookie arrived at the server, mpv log empty), release smoke test (Windows registry part runs only in CI). The watch page now loads lazily (home page JS 174 → 144 KB). Not run here: the Windows registry part and a browser opening the link on Windows.
 * Key constraint: **Cloudflare cannot reach BDIX**, and an https page cannot freely call http BDIX servers. On `pages.dev` the user normally needs the **gateway** (`gateway/bdix-gateway.mjs`) on their own device or network.
 
 ## Read order
@@ -55,7 +56,7 @@ Outside npm: **Node 22+**; **ffmpeg** with libx264/libx265/vpx/aac/ac3/opus for 
 
 ```bash
 npm ci                    # installs everything incl. Chromium and workerd binaries (no other downloads needed)
-npm test                  # 166 tests, ~3 s
+npm test                  # 177 tests, ~3 s
 npm run e2e:media         # once; writes e2e/media/ (git-ignored)
 npm run e2e               # ~4 min; add a word to run matching steps only
 npm run smoke:cf          # ~20 s
@@ -90,8 +91,8 @@ READ FIRST, in this order, before changing anything:
 my task  4. VERIFICATION.md (before touching tests).
 
 SETUP: Node 22+, run `npm ci`, then `npm test` and confirm the baseline before
-you change code (166 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
-(38 steps).
+you change code (177 passing). For browser tests run `npm run e2e:media` once (needs ffmpeg), then `npm run e2e`
+(39 steps).
 
 TASK: <one or two sentences: what I want, and why>
 

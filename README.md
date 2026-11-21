@@ -182,6 +182,36 @@ Then enter `http://127.0.0.1:8787` (and the token) in **Settings → Connection*
 
 Traffic caveat: through the gateway, video flows *server → gateway → your device*. Keep the gateway on the same BDIX network as your device so the traffic stays local. Do not put it behind a public tunnel: that would send BDIX traffic over international links.
 
+### Play in mpv (the gateway is needed only for the search)
+
+RafTV can hand the video to **mpv** on your PC instead of playing it in the browser. The browser still needs the gateway to *find* sources, but mpv then fetches the video **straight from the server**: it is not a browser, so CORS and mixed-content rules do not apply, and it can send the Referer/User-Agent the servers expect. Once mpv is playing, you can close the gateway. mpv also plays what browsers cannot: HEVC/H.265, Dolby/DTS audio, AVI, DASH.
+
+**Set up once (Windows):**
+
+1. Install mpv (from mpv.io). Either make sure `mpv.exe` is on your `PATH`, or create `raftv-gateway.json` next to `raftv-gateway.exe` with its full path:
+   ```json
+   {"mpvPath": "C:\\Tools\\mpv\\mpv.exe"}
+   ```
+   (`MPV_PATH` in the environment overrides it. The file is only read, never written; it can also hold the gateway settings above.)
+2. Open a Command Prompt in the folder that holds `raftv-gateway.exe` and run:
+   ```bat
+   raftv-gateway.exe --mpv-register
+   ```
+   This writes three registry values for **your user only** (`HKCU\Software\Classes\raftv-mpv`) so that `raftv-mpv://` links open mpv through this program. If you move `raftv-gateway.exe`, run it again. To undo: `raftv-gateway.exe --mpv-unregister`. (From source instead: `node gateway/exe-main.mjs --mpv-register`.)
+3. In RafTV: **Settings → Playback → Play videos in: mpv on this computer**. This choice stays on this device; it is not synced to your account.
+
+**Each time:**
+
+1. Start the gateway (double-click `raftv-gateway.exe`).
+2. Press **Play** on a title. RafTV searches as usual, then shows **Open in mpv** (best source first; **Other sources** or the *Sources* sheet offer every file, each with *Open in mpv*). The first time, the browser asks whether to open the link: allow it (tick "always allow" to skip the question next time).
+3. mpv starts. You can now close the gateway window; mpv keeps playing.
+
+**What it writes:** opening a link writes **nothing** to disk: the program checks the link, starts mpv with the file's own address and exits (a console window flashes briefly). It never starts the gateway. RafTV passes `--save-position-on-quit=no`, so mpv does not save a watch-later file even if your `mpv.conf` turns that on. Only setup writes anything: `--mpv-register` (the three registry values) and, on mpv's very first start, mpv itself creates its empty settings folder (that happens with any use of mpv). Windows may keep its usual traces of programs you start (e.g. Prefetch).
+
+**Safety:** any web page could open a `raftv-mpv://` link (your browser asks first). The program accepts only a plain `http(s)` address without a user name or password, a title of at most 200 characters and up to 8 plain header values. Every value is passed to mpv as one argument, without a shell, and the address comes after `--`, so a link cannot add mpv options or run commands.
+
+**Limits:** mpv does not report back where you stopped. RafTV still gives mpv your resume point if you started the title in the browser player, and adds it to History. Subtitles found in RafTV, *next episode* and playback progress stay with the browser player. Registering links automatically works on Windows only. On Linux/macOS, copy a link's address and pass its stream to mpv yourself, or register `raftv-mpv://` with your desktop to run `node gateway/exe-main.mjs --mpv-open %u` (not tested).
+
 ---
 
 ## Scripts
@@ -189,9 +219,9 @@ Traffic caveat: through the gateway, video flows *server → gateway → your de
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local server (static + API + `_headers`) |
-| `npm test` | 166 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
+| `npm test` | 177 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
 | `npm run e2e:media` | Generates the small test videos (needs `ffmpeg`) |
-| `npm run e2e` | 38 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
+| `npm run e2e` | 39 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
 | `npm run smoke:cf` | Runs the real Cloudflare runtime (`wrangler pages dev` / workerd) against a mock TMDB: 9 Cloudflare runtime checks of the Function, routing and headers |
 | `npm run rebrand` | Syncs `index.html` and the web manifest with `public/js/brand.js` after you change the name or colour |
 | `npm run check:docs` | Checks that the documentation still matches the code (paths, scripts, counts, versions, env vars) |

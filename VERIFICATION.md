@@ -125,7 +125,7 @@ The golden file is data recorded from the GPL-3.0 originals (see `NOTICE.md`). R
 * **Failure capture**: any browser `console.error` or `pageerror` (except expected 404/5xx resource noise, and except pages flagged `__expectErrors` for deliberate failure injection) and any `securitypolicyviolation` fails the run.
 * **Screenshots** are written to `e2e/screenshots/` (git-ignored) at 390, 820 and 1440 px and for key states; they are reviewed by eye, not compared pixel-wise.
 
-### Steps (38)
+### Steps (39)
 
 | # | Step | Key assertions |
 |---|---|---|
@@ -143,6 +143,7 @@ The golden file is data recorded from the GPL-3.0 originals (see `NOTICE.md`). R
 | 14 | MOV and MKV | both play with video and audio although the server sends `application/octet-stream` |
 | 15 | subtitles | auto-loaded; `Café` decoded from Latin-1; size doubles, height moves up, colour and box background apply and persist to settings; Bengali search and load; file upload; Off |
 | 16 | gateway | settings UI saves URL+token; Test connection reports hosts; lookups arrive with the gateway's Chrome/151 User-Agent and no `Origin`; media streamed via `/s`; Range proxied; download is an attachment with the right file name (206 for a range request); wrong token → 401 |
+| 16b | mpv | Settings: *Play videos in* = mpv (saved, device-only), help shown; Play searches through the gateway (BDIX POSTs seen), no `<video>`, no Subtitles button; *Open in mpv* link decodes (with the gateway's own parser) to the mock server's file, **2160p HEVC first** (mpv plays it), no gateway address or token in it, `--` before the URL; every Sources ticket is an *Open in mpv* link; after the gateway is closed (its `/health` fails) the same URL and Referer still return 206; phone 390 px: panel elements within the screen |
 | 17 | failure UX | servers down: chips and guidance text, "Connection settings" opens settings, watch page shows "No sources found"; CORS-less server diagnosed as `cors` |
 | 18 | settings | compat mode hides `.mov`; provider off sends no requests; preference off puts the 2160p HEVC file first; language chips; live subtitle preview; reset |
 | 19 | platforms | Android intents (VLC, MX), iOS callbacks (VLC, Infuse) and MKV flagged unplayable on Safari, desktop gets no app links but always an `.m3u` |
@@ -222,6 +223,10 @@ Procedure: edit the code to re-introduce the bug, run `npm test`, confirm exactl
 | FlixHub marked `edge` again / `flixhub.net` back in the default edge list | `FlixHub is a BDIX server ...` / both edge allow-list tests |
 | No `blocked` class in `classify()` / `blockedByCloudflare()` always false / its status guard removed | `failure classification: ... "blocked"` / `edge proxy: a Cloudflare block ...` (the status-guard mutant first survived; the `/ok-lookalike/` case was added for it) |
 
+| mpv link parser accepts any protocol (`file:`, `edl://`) | `mpv link parser: refuses anything but a plain http(s) media URL` |
+| mpv arguments without `--` before the URL | `mpv arguments: ...` and `mpv handler: starts mpv detached ...` |
+| Watch page puts the gateway address (`net.mediaUrl`) into the mpv link | E2E step 16b ("no gateway address or token in the link") |
+
 Also exercised the other way round: editing `brand.js` without running `npm run rebrand` makes `brand: index.html and the web manifest match ...` fail.
 
 ## 11. Stress runs
@@ -268,6 +273,8 @@ Found by testing (not by review), with how it was found and what keeps it fixed.
 | 29 | **FlixHub treated as a public site** and sent through the Cloudflare edge proxy. The original manifest says "FlixHub FTP: BDIX"; `flixhub.net` resolves to a Bangladeshi address; the deployed proxy answered 504 after 10 s, and the Download sheet waited for it | user report (Test connection: FlixHub unreachable while DhakaFlix was reachable); live check of the deployed `/api/proxy` | `group: 'bdix'`, no edge, removed from `DEFAULT_EDGE_PROXY_HOSTS`; the e2e BDIX mock serves its pages | unit + E2E step 8 |
 | 30 | **Hexion reported as "server error"** on the deployment: from Cloudflare's network `4khdhub.one` answers 403 "error code: 1106" and `hubdrive.blog`/`hubcloud.mov` a 403 bot challenge, so the edge proxy can never work for it | live check of the deployed `/api/proxy` (Nov 19, 2026) | the proxy marks Cloudflare blocks (`x-upstream-blocked`), new provider state `blocked` ("needs gateway") with an explanation | unit + E2E step 30 |
 | 31 | App JS over budget (170.2 KB) after these fixes | E2E step 22 | shorter comments (the reasons are in IMPLEMENTATION) | E2E step 22 |
+| 32 | App JS over budget (178.2 KB) once mpv support was added: `main.js` imported the watch page (and through it `player.js`, `subs.js`, `mpv.js`) on every page | E2E step 22 | the watch view is imported on the first Play, like Admin; home page 144 KB | E2E step 22 |
+| 33 | mpv panel clipped on a phone (a long file name made the centred grid wider than the screen); the first overflow check missed it because phone emulation widens `innerWidth` to fit | screenshot review | one column no wider than the stage, names wrap; the check compares with the real 390 px | E2E step 16b (failed before the CSS fix) |
 | 20 | E2E not hermetic once online providers existed: gateway step reached live FlixHub/Hexion; edge replies cached across steps | console error + step time (27 s → 2.5 s) | harness answers/aborts provider hosts; endpoints pointed at the mock; cache off in the Hexion steps (29, 30) | harness |
 | 13 | UX polish: hero hid the first rail; toolbar wrapped; notice headings dim inside sheets; subtitle tooltip ran into its label | screenshot review | CSS and label changes | screenshots, E2E step 25 |
 
@@ -277,13 +284,13 @@ Test-side mistakes (not product bugs) were also found and corrected, e.g. a taut
 
 | Suite | Result |
 |---|---|
-| `npm test` | 166 tests pass |
-| `npm run e2e` | 38 steps pass; no browser console errors (steps 26-28 allow exactly the fallback endpoint's CORS error, and step 28 the CDN's refusal of hls.js, which is the case under test); no CSP violations |
+| `npm test` | 177 tests pass |
+| `npm run e2e` | 39 steps pass; no browser console errors (steps 26-28 allow exactly the fallback endpoint's CORS error, and step 28 the CDN's refusal of hls.js, which is the case under test); no CSP violations |
 | `npm run smoke:cf` | 9 checks pass |
 | `npm run check:docs` | passes |
 | Clean-room reproduction | extract the zip, `npm ci`, `npm test`, `npm run build:vendor` (bundles identical to the committed ones), `npm run e2e:media`, `npm run e2e`, `npm run smoke:cf` |
 
-Measured on the home page (desktop, local server, printed by E2E step 22): 73 requests, app JS 170 KB as served to the browser (budget 170 KB: **about 50 bytes left**. Before Mavonyx 740 bytes were left; its stub, registration, ranking rules and meta fields cost about 0.7 KB after condensing some comments in `providers/index.js`, as in bug 31. The next home-page addition needs a structural saving, e.g. loading `providers/index.js` and `streams.js` on the first Play/Download; 229 KB across all 33 modules on disk, 71 KB gzipped; Settings, account screens, Admin and the Mavonyx lookup load on first use), CSS 24 KB, font 40 KB, `DOMContentLoaded` 130-190 ms. Player libraries are not requested on the home page.
+Measured on the home page (desktop, local server, printed by E2E step 22): 71 requests, app JS 144 KB as served to the browser (budget 170 KB, about 26 KB left since Nov 21, 2026: the watch page, the player wrapper and the subtitle code now load on the first Play (`main.js`), bug 32. Before that only about 50 bytes were left; about 250 KB across all 34 modules on disk, about 93 KB gzipped file by file (sum of the files, measured Nov 21, 2026; the earlier 229/71 KB figures came from a different measurement and were not reproduced); Settings, account screens, Admin and the Mavonyx lookup load on first use), CSS 24 KB, font 40 KB, `DOMContentLoaded` 130-190 ms. Player libraries are not requested on the home page.
 
 ## 14. Not verified (and how to verify it yourself)
 
@@ -299,6 +306,7 @@ Measured on the home page (desktop, local server, printed by E2E step 22): 73 re
 | Real phones and touch gestures | emulated viewport only | Test on your phone: layout, player controls, external-player links |
 | Audible sound | measured as decoded audio bytes | Listen once |
 | Long sessions, memory | not exercised | Play a full episode |
+| *Play in mpv* on Windows | the handler logic, the packaged Linux program and real mpv 0.37 on Linux were run (packaged program → mpv → local server: Referer, User-Agent and cookie arrived, spaces encoded, mpv log empty, handler folder empty; mpv itself created its empty `~/.config/mpv` on first start, as it does in any use); the registry part (`--mpv-register`) and Chrome/Edge opening a `raftv-mpv://` link were not seen; the Windows smoke test registers, queries and removes the keys in CI | Follow README *Play in mpv*; if nothing opens, check `HKCU\Software\Classes\raftv-mpv\shell\open\command` |
 | `raftv-gateway.exe` on Windows | only a Linux build of the same program was run here (`scripts/smoke-gateway-exe.mjs` and a 200 MB streaming measurement); the Windows build and its smoke test run in GitHub Actions; SmartScreen and firewall prompts not seen | Run the `gateway-exe` workflow (or push a `gateway-v1.0.0` tag), download, double-click, follow README *The gateway* |
 
 **Fixed (pre-existing, found Nov 19, 2026):** on a phone the watch page's "No sources found" message overflowed its 16:9 stage and covered the title bar (`.stage .loading` was absolutely centred in the fixed-ratio box). Error messages now carry `.msg`, and a stage holding one grows to fit (`public/css/app.css`); E2E step 31 checks it at 390 px (it failed with 67 px of overflow before the fix).
