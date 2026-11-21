@@ -3,7 +3,7 @@
 // Defaults for a double-click: reachable only from this PC (127.0.0.1; owner: no phone/network access), a token derived
 // from this PC (same on every start, nothing stored), only the RafTV site allowed by CORS. It writes NOTHING to disk: an optional
 // raftv-gateway.json next to the program is read if the user created one, never written. Environment variables
-// (HOST, PORT, GATEWAY_TOKEN, ALLOWED_ORIGINS, ALLOW_PRIVATE, TLS_KEY, TLS_CERT) override the file.
+// (HOST, PORT, GATEWAY_TOKEN, ALLOWED_ORIGINS, ALLOW_PRIVATE, PRIVATE_NETWORKS, TLS_KEY, TLS_CERT) override the file.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -65,6 +65,7 @@ export function settings(dir, env = process.env) {
       GATEWAY_TOKEN: env.GATEWAY_TOKEN || fileToken || derived.token,
       ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || list(s.allowedOrigins) || DEFAULT_SITE,
       ALLOW_PRIVATE: env.ALLOW_PRIVATE || list(s.allowPrivate),
+      PRIVATE_NETWORKS: env.PRIVATE_NETWORKS || (s.privateNetworks === false ? 'off' : ''),
       TLS_KEY: env.TLS_KEY || s.tlsKey || '',
       TLS_CERT: env.TLS_CERT || s.tlsCert || '',
       UPSTREAM_TIMEOUT_MS: env.UPSTREAM_TIMEOUT_MS || '',
@@ -94,6 +95,7 @@ export function main() {
     console.log(`  Address  ${scheme}://${cfg.host}:${port}`);
     console.log(`  Token    ${cfg.token || '(none)'}`);
     console.log(`\nAllowed site(s): ${cfg.origins.join(', ') || 'any'}`);
+    console.log(`LAN addresses:   ${cfg.privateNetworks ? 'allowed (private-range BDIX servers, like the original extension)' : 'off (only those in allowPrivate)'}`);
     if (!stable) console.log('Note: this token changes on every start (no PC id found); put a "token" in raftv-gateway.json to keep one.');
     console.log(file ? `Settings file:   ${file} (read only)` : `Settings file:   none; defaults in use (optional: ${path.join(dir, CONFIG_NAME)})`);
     console.log('Nothing is written to disk.');

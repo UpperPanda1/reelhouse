@@ -173,6 +173,7 @@ Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a
   "port": 8787,
   "host": "127.0.0.1",
   "allowedOrigins": ["https://raftv.pages.dev"],
+  "privateNetworks": true,
   "allowPrivate": ["172.16.50.12", "172.16.50.14"],
   "tlsKey": "C:\\certs\\key.pem",
   "tlsCert": "C:\\certs\\cert.pem",
@@ -185,7 +186,8 @@ Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a
 | `token` | derived from this PC (stable) | gateway token; must be at least 12 characters |
 | `port`, `host` | `8787`, `127.0.0.1` | where it listens; a non-loopback host needs a token |
 | `allowedOrigins` | `https://raftv.pages.dev` | sites allowed to use it; put your own Pages address here if it differs |
-| `allowPrivate` | DhakaFlix `172.16.50.12`, `.14` | private addresses it may contact |
+| `privateNetworks` | `true` | may contact servers on private network ranges (10.x, 172.16-31.x, 192.168.x, 100.64-127.x, IPv6 `fc00::/7`), like the original extension's BDIX plugin. `false` = only the addresses in `allowPrivate` |
+| `allowPrivate` | DhakaFlix `172.16.50.12`, `.14` | extra hosts or addresses it may contact; needed only for this PC itself (`127.0.0.1`/`localhost`) or when `privateNetworks` is `false`. `[]` = none |
 | `tlsKey`, `tlsCert` | none | serve https |
 | `mpvPath` | `mpv.exe` on `PATH` | mpv for *Play in mpv* (`MPV_PATH` overrides it) |
 
@@ -224,8 +226,11 @@ Then enter `http://127.0.0.1:8787` (and the token) in **Settings → Connection*
 | `HOST`, `PORT` | Bind address (default `127.0.0.1:8787`). A non-loopback `HOST` **refuses to start without** `GATEWAY_TOKEN`. |
 | `GATEWAY_TOKEN` | Required on every request except `/health` (`?k=` or `x-rh-token`). |
 | `ALLOWED_ORIGINS` | Comma list of site origins allowed by CORS (default: any). Set it to your Pages URL. |
-| `ALLOW_PRIVATE` | Private hosts the gateway may contact (default `172.16.50.12,172.16.50.14`). Loopback/private ranges are otherwise blocked; link-local and metadata addresses can never be allowed. |
+| `PRIVATE_NETWORKS` | `on` (default) or `off`. On: the gateway may contact any server on a private network range (BDIX servers live there), as the original extension's BDIX plugin does. Off: only the hosts in `ALLOW_PRIVATE`. This machine itself (loopback) is never included. |
+| `ALLOW_PRIVATE` | Extra hosts or addresses the gateway may contact even when they are private (default `172.16.50.12,172.16.50.14`; an empty value means none). The only way to allow this machine itself (`127.0.0.1`, `localhost`). Link-local/cloud-metadata, multicast, documentation, benchmark and other special-use addresses can never be allowed. |
 | `TLS_KEY`, `TLS_CERT` | Serve over https. Needed if the site is https and the gateway is on a LAN address. Browsers generally treat `http://127.0.0.1` / `localhost` as a secure origin, so an https site can usually call a gateway on the same device without TLS (Chrome/Edge may ask a one-time "local network" permission; Safari may still refuse). **This was not verified in an https setup here**: the automated tests run the site and gateway over plain http on loopback. |
+
+Security note on `PRIVATE_NETWORKS`: with it on (the default, as in the original extension), a page that knows your token could ask the gateway to reach other devices on your network (for example your router's page). The token and `ALLOWED_ORIGINS` are what stop other websites from doing that; keep both. Set `PRIVATE_NETWORKS=off` (or `"privateNetworks": false`) and list your servers in `ALLOW_PRIVATE` if you prefer the strict mode.
 
 Traffic caveat: through the gateway, video flows *server → gateway → your device*. Keep the gateway on the same BDIX network as your device so the traffic stays local. Do not put it behind a public tunnel: that would send BDIX traffic over international links.
 
@@ -266,7 +271,7 @@ RafTV can hand the video to **mpv** on your PC instead of playing it in the brow
 | Command | What it does |
 |---|---|
 | `npm run dev` | Local server (static + API + `_headers`) |
-| `npm test` | 177 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
+| `npm test` | 183 unit and integration tests (server layer, gateway, providers vs. golden output, client logic, router, API client, branding) |
 | `npm run e2e:media` | Generates the small test videos (needs `ffmpeg`) |
 | `npm run e2e` | 39 browser end-to-end steps in headless Chromium (real gateway, mock BDIX server, real videos). Add a word to run matching steps only: `npm run e2e -- subtitles` |
 | `npm run smoke:cf` | Runs the real Cloudflare runtime (`wrangler pages dev` / workerd) against a mock TMDB: 9 Cloudflare runtime checks of the Function, routing and headers |

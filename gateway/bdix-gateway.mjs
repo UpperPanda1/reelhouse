@@ -43,17 +43,27 @@ function ip6ToBytes(ip) {
 }
 const v4FromBytes = (b, o) => `${b[o]}.${b[o + 1]}.${b[o + 2]}.${b[o + 3]}`;
 
-/** 'never' = can never be allowlisted, 'private' = only reachable if explicitly allowlisted, null = public. */
+/**
+ * Address classes, as the original extension's AddressPolicy (shared/.../net/address-policy.kt):
+ * 'never' = unreachable whatever the settings (unspecified, link-local/metadata, multicast, reserved, documentation and
+ *           benchmark ranges, Teredo, site-local), 'loopback' = this machine (only if listed in ALLOW_PRIVATE),
+ * 'private' = LAN ranges (allowed while PRIVATE_NETWORKS is on, the default, like the original BDIX plugin), null = public.
+ */
 export function classify(ip) {
   if (net.isIPv6(ip)) {
     const b = ip6ToBytes(ip);
     const zeros = (from, to) => { for (let i = from; i < to; i++) if (b[i] !== 0) return false; return true; };
     if (zeros(0, 16)) return 'never';                                   // ::
-    if (zeros(0, 15) && b[15] === 1) return 'private';                  // ::1 loopback
+    if (zeros(0, 15) && b[15] === 1) return 'loopback';                 // ::1
     if (zeros(0, 10) && b[10] === 0xff && b[11] === 0xff) return classify(v4FromBytes(b, 12));  // ::ffff:a.b.c.d (any textual form)
     if (zeros(0, 12)) return classify(v4FromBytes(b, 12));              // deprecated IPv4-compatible
     if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zeros(4, 12)) return classify(v4FromBytes(b, 12)); // NAT64 64:ff9b::/96
     if (b[0] === 0x20 && b[1] === 0x02) return classify(v4FromBytes(b, 2)); // 6to4 2002::/16 embeds an IPv4 address
+    if (b[0] === 0x01 && zeros(1, 8)) return 'never';                   // 100::/64 discard-only
+    if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && b[4] === 0x00 && b[5] === 0x01) return 'never'; // 64:ff9b:1::/48 local-use NAT64
+    if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3] === 0x00) return 'never'; // 2001::/32 Teredo
+    if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return 'never'; // 2001:db8::/32 documentation
+    if (b[0] === 0xfe && (b[1] & 0xc0) === 0xc0) return 'never';        // fec0::/10 site-local (deprecated)
     if ((b[0] & 0xfe) === 0xfc) return 'private';                       // fc00::/7
     if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return 'never';        // fe80::/10 link-local
     if (b[0] === 0xff) return 'never';                                  // multicast
@@ -61,8 +71,19 @@ export function classify(ip) {
   }
   if (!net.isIPv4(ip)) return 'never';
   if (inCidr(ip, '0.0.0.0', 8) || inCidr(ip, '169.254.0.0', 16) || inCidr(ip, '224.0.0.0', 4) || inCidr(ip, '240.0.0.0', 4)) return 'never';
-  if (inCidr(ip, '127.0.0.0', 8) || inCidr(ip, '10.0.0.0', 8) || inCidr(ip, '172.16.0.0', 12) || inCidr(ip, '192.168.0.0', 16) || inCidr(ip, '100.64.0.0', 10)) return 'private';
+  if (inCidr(ip, '192.0.0.0', 24) || inCidr(ip, '192.0.2.0', 24) || inCidr(ip, '192.88.99.0', 24) || inCidr(ip, '198.18.0.0', 15) || inCidr(ip, '198.51.100.0', 24) || inCidr(ip, '203.0.113.0', 24)) return 'never';
+  if (inCidr(ip, '127.0.0.0', 8)) return 'loopback';
+  if (inCidr(ip, '10.0.0.0', 8) || inCidr(ip, '172.16.0.0', 12) || inCidr(ip, '192.168.0.0', 16) || inCidr(ip, '100.64.0.0', 10)) return 'private';
   return null;
+}
+
+/** May the gateway connect to `addr` (reached as `hostname`)? ALLOW_PRIVATE lists hosts or addresses (needed for loopback). */
+export function addressAllowed(cfg, hostname, addr) {
+  const c = classify(addr);
+  if (c === 'never') return false;
+  if (c === null) return true;
+  const listed = cfg.allowPrivate.has(hostname) || cfg.allowPrivate.has(addr);
+  return c === 'loopback' ? listed : (cfg.privateNetworks !== false || listed);
 }
 
 function makeLookup(cfg) {
@@ -71,9 +92,7 @@ function makeLookup(cfg) {
     if (typeof options === 'function') { cb = options; options = {}; }
     const finish = (addr, family) => (options.all ? cb(null, [{ address: addr, family }]) : cb(null, addr, family));
     const check = (addr, family) => {
-      const c = classify(addr);
-      if (c === 'never') return cb(Object.assign(new Error('address blocked'), { code: 'EBLOCKED' }));
-      if (c === 'private' && !cfg.allowPrivate.has(hostname) && !cfg.allowPrivate.has(addr)) return cb(Object.assign(new Error('private address not allowlisted'), { code: 'EBLOCKED' }));
+      if (!addressAllowed(cfg, hostname, addr)) return cb(Object.assign(new Error('address blocked'), { code: 'EBLOCKED' }));
       finish(addr, family);
     };
     if (net.isIP(hostname)) return check(hostname, net.isIPv6(hostname) ? 6 : 4);
@@ -92,16 +111,30 @@ function requestOnce(cfg, url, { method, headers, body, signal }) {
   });
 }
 
-export async function fetchUpstream(cfg, rawUrl, init, hops = 5) {
+/**
+ * One redirect, as the original host (safe-http.kt): never from https to http; 303, and 301/302 after a POST, become a
+ * GET without the body and without its content-type/content-length (else the server waits for a body that never comes).
+ */
+export function redirectStep(current, status, location, method, body, headers) {
+  const url = new URL(location, current);
+  if (current.protocol === 'https:' && url.protocol !== 'https:') throw Object.assign(new Error('redirect from https to http refused'), { code: 'EDOWNGRADE' });
+  if (status === 303 || ((status === 301 || status === 302) && method === 'POST')) {
+    const h = {};
+    for (const [k, v] of Object.entries(headers || {})) if (k !== 'content-type' && k !== 'content-length') h[k] = v;
+    return { url, method: 'GET', body: undefined, headers: h };
+  }
+  return { url, method, body, headers };
+}
+
+export async function fetchUpstream(cfg, rawUrl, init, hops = 10) {
   let url = new URL(rawUrl);
-  let { method } = init; let body = init.body;
+  let { method, body, headers } = init;
   for (let i = 0; i <= hops; i++) {
     validateUrl(cfg, url);
-    const res = await requestOnce(cfg, url, { ...init, method, body });
+    const res = await requestOnce(cfg, url, { ...init, method, body, headers });
     if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
       res.resume();
-      url = new URL(res.headers.location, url);
-      if (res.statusCode === 303 || ((res.statusCode === 301 || res.statusCode === 302) && method === 'POST')) { method = 'GET'; body = undefined; }
+      ({ url, method, body, headers } = redirectStep(url, res.statusCode, res.headers.location, method, body, headers));
       continue;
     }
     res.finalUrl = url.toString();
@@ -116,8 +149,7 @@ function validateUrl(cfg, url) {
   // Node does not call `lookup` for IP-literal hosts, so literals (incl. 2130706433 / 0x7f.1 forms, which URL normalises) are vetted here.
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (net.isIP(host)) {
-    const c = classify(host);
-    if (c === 'never' || (c === 'private' && !cfg.allowPrivate.has(host))) throw Object.assign(new Error('address blocked'), { code: 'EBLOCKED' });
+    if (!addressAllowed(cfg, host, host)) throw Object.assign(new Error('address blocked'), { code: 'EBLOCKED' });
   }
 }
 
@@ -170,7 +202,9 @@ export function loadConfig(env = process.env) {
     port: Number(env.PORT || 8787),
     token: env.GATEWAY_TOKEN || '',
     origins: String(env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
-    allowPrivate: new Set((env.ALLOW_PRIVATE ? env.ALLOW_PRIVATE.split(',').map((s) => s.trim()).filter(Boolean) : DEFAULT_ALLOW_PRIVATE)),
+    // undefined = the defaults; '' = none (only the LAN ranges, if PRIVATE_NETWORKS is on)
+    allowPrivate: new Set(env.ALLOW_PRIVATE !== undefined ? String(env.ALLOW_PRIVATE).split(',').map((s) => s.trim()).filter(Boolean) : DEFAULT_ALLOW_PRIVATE),
+    privateNetworks: !/^(0|off|false|no)$/i.test(String(env.PRIVATE_NETWORKS || '').trim()),
     referers: { ...DEFAULT_REFERERS },
     upstreamTimeoutMs: Number(env.UPSTREAM_TIMEOUT_MS || 20000),
     maxEnvelopeBytes: 1_000_000,
@@ -209,6 +243,7 @@ export function createGateway(userCfg = {}) {
     if (e.code === 'EBLOCKED') return sendJson(req, res, 403, { error: 'blocked', message: e.message });
     if (e.code === 'EBADURL') return sendJson(req, res, 400, { error: 'bad_url', message: e.message });
     if (e.code === 'ETIMEDOUT') return sendJson(req, res, 504, { error: 'upstream_timeout' });
+    if (e.code === 'EDOWNGRADE') return sendJson(req, res, 502, { error: 'insecure_redirect', message: e.message });
     return sendJson(req, res, 502, { error: 'upstream_error', message: e.code || 'unreachable' });
   };
   const upstreamHeaders = (target, fromClient, range) => {
@@ -301,7 +336,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   server.listen(cfg.port, cfg.host, () => {
     console.log(`RafTV gateway listening on ${cfg.tls ? 'https' : 'http'}://${cfg.host}:${cfg.port}`);
     console.log(`  auth token : ${cfg.token ? 'required' : 'none (loopback only)'}`);
-    console.log(`  allow-list : private hosts ${[...cfg.allowPrivate].join(', ') || '(none)'}`);
+    console.log(`  private    : ${cfg.privateNetworks ? 'LAN ranges allowed' : 'LAN ranges off'}; also listed: ${[...cfg.allowPrivate].join(', ') || '(none)'}`);
     console.log(`  origins    : ${cfg.origins.join(', ') || '* (any)'}`);
   });
 }

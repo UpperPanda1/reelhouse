@@ -103,7 +103,7 @@ test('download mode sets a sanitised Content-Disposition', async () => {
 });
 
 test('SSRF: blocks loopback (not allowlisted), metadata, literal/decimal IPs, IPv6, odd schemes, credentials, redirects into blocked space', async () => {
-  const strict = createGateway({ host: '127.0.0.1', token: 'secret', allowPrivate: [] });
+  const strict = createGateway({ host: '127.0.0.1', token: 'secret', allowPrivate: [], privateNetworks: false });
   const sp = await listen(strict);
   const S = (u) => fetch(`http://127.0.0.1:${sp}/s?k=secret&u=${encodeURIComponent(u)}`).then((r) => r.status);
   try {
@@ -132,7 +132,7 @@ test('SSRF: blocks loopback (not allowlisted), metadata, literal/decimal IPs, IP
 });
 
 test('classify(): address policy matrix', () => {
-  const cases = { '8.8.8.8': null, '15.1.1.50': null, '172.16.50.12': 'private', '172.32.0.1': null, '10.1.2.3': 'private', '192.168.0.1': 'private', '100.64.0.1': 'private', '127.0.0.1': 'private', '169.254.169.254': 'never', '0.0.0.0': 'never', '224.0.0.1': 'never', '::1': 'private', 'fd00::1': 'private', 'fe80::1': 'never', '::ffff:10.0.0.1': 'private', '2606:4700::1111': null, '::ffff:7f00:1': 'private', '::ffff:a9fe:a9fe': 'never', '::ffff:808:808': null, '64:ff9b::a00:1': 'private', '2002:a00:1::': 'private', '2002:808:808::': null, '::7f00:1': 'private', '::': 'never' };
+  const cases = { '8.8.8.8': null, '15.1.1.50': null, '172.16.50.12': 'private', '172.32.0.1': null, '10.1.2.3': 'private', '192.168.0.1': 'private', '100.64.0.1': 'private', '127.0.0.1': 'loopback', '169.254.169.254': 'never', '0.0.0.0': 'never', '224.0.0.1': 'never', '::1': 'loopback', 'fd00::1': 'private', 'fe80::1': 'never', '::ffff:10.0.0.1': 'private', '2606:4700::1111': null, '::ffff:7f00:1': 'loopback', '::ffff:a9fe:a9fe': 'never', '::ffff:808:808': null, '64:ff9b::a00:1': 'private', '2002:a00:1::': 'private', '2002:808:808::': null, '::7f00:1': 'loopback', '::': 'never' };
   for (const [ip, want] of Object.entries(cases)) assert.equal(classify(ip), want, ip);
 });
 

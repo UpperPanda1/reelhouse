@@ -59,6 +59,12 @@ test('packaged gateway: writes nothing to disk; the token is derived (same after
   assert.match(a.token, /^[A-Za-z0-9_-]{16}$/);
   assert.match(a.out, /Allowed site\(s\): https:\/\/raftv\.pages\.dev/);
   assert.match(a.out, /mpv: .*--mpv-register/, 'the window points to the mpv setup');
+  assert.match(a.out, /LAN addresses: +allowed/, 'LAN ranges allowed by default, like the original BDIX plugin');
+  const offDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rgw-'));
+  fs.writeFileSync(path.join(offDir, 'raftv-gateway.json'), JSON.stringify({ privateNetworks: false }));
+  const off = await start(offDir, { HOST: '127.0.0.1', PORT: '0' });
+  off.child.kill();
+  assert.match(off.out, /LAN addresses: +off/, 'the settings file can turn them off');
   const b = await start(dir, { HOST: '127.0.0.1', PORT: '0' });
   b.child.kill();
   assert.equal(b.token, a.token, 'same token after a restart (the phone keeps working), with nothing stored');
