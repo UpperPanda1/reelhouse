@@ -146,6 +146,53 @@ Left unchanged on purpose: the `rh:` prefix of saved settings (changing it would
 
 Run it on a machine that can reach your BDIX servers (your PC, a Raspberry Pi, a VPS in Bangladesh). Zero dependencies.
 
+### Step by step: watching with the gateway (and optionally mpv)
+
+**Once:**
+
+1. Download `raftv-gateway.exe` (see below) into its own folder, for example `C:\Tools\raftv`.
+2. Double-click it. The window shows an **Address** (`http://127.0.0.1:8787`) and a **Token**.
+3. Open your RafTV site in a browser **on the same PC**: **Settings → Connection to BDIX servers**, enter the Address and Token, press **Save**, then **Test connection**. DhakaFlix / Circle FTP / FlixHub should say *reachable*.
+4. Optional, to play in **mpv** instead of the browser (it plays HEVC, Dolby/DTS and every container, and the gateway can be closed while you watch):
+   1. Install mpv (mpv.io). If `mpv.exe` is not on your `PATH`, create `raftv-gateway.json` in the gateway's folder (see *Settings file* below) with `"mpvPath"`.
+   2. Open a Command Prompt in the gateway's folder and run `raftv-gateway.exe --mpv-register`.
+   3. In RafTV: **Settings → Playback → Play videos in → mpv on this computer**.
+
+**Every time:**
+
+1. Double-click `raftv-gateway.exe` and keep its window open while you search.
+2. In RafTV press **Play** (or **Download**). The search goes through the gateway.
+3. Browser player: keep the gateway open until you finish watching (the video flows through it).
+   mpv: press **Open in mpv** (the first time, allow the browser to open the link). Once mpv plays, you may close the gateway window.
+
+**Settings file `raftv-gateway.json`** (optional, next to the program; only read, never written; environment variables override it). All keys are optional:
+
+```json
+{
+  "token": "at-least-12-characters",
+  "port": 8787,
+  "host": "127.0.0.1",
+  "allowedOrigins": ["https://raftv.pages.dev"],
+  "allowPrivate": ["172.16.50.12", "172.16.50.14"],
+  "tlsKey": "C:\\certs\\key.pem",
+  "tlsCert": "C:\\certs\\cert.pem",
+  "mpvPath": "C:\\Tools\\mpv\\mpv.exe"
+}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `token` | derived from this PC (stable) | gateway token; must be at least 12 characters |
+| `port`, `host` | `8787`, `127.0.0.1` | where it listens; a non-loopback host needs a token |
+| `allowedOrigins` | `https://raftv.pages.dev` | sites allowed to use it; put your own Pages address here if it differs |
+| `allowPrivate` | DhakaFlix `172.16.50.12`, `.14` | private addresses it may contact |
+| `tlsKey`, `tlsCert` | none | serve https |
+| `mpvPath` | `mpv.exe` on `PATH` | mpv for *Play in mpv* (`MPV_PATH` overrides it) |
+
+In JSON, Windows paths need doubled backslashes (`C:\\Tools\\mpv\\mpv.exe`). If your site is not `raftv.pages.dev`, set `allowedOrigins`, or the browser will be refused.
+
+**Troubleshooting:** *Test connection* says unreachable → is the gateway window open and the Address/Token exact? *Open in mpv* does nothing → run `--mpv-register` again (needed after moving the program) and check that the browser didn't block the link; a window that says "mpv was not found" means `mpvPath` is wrong. Undo the mpv link: `raftv-gateway.exe --mpv-unregister`.
+
 **Windows, no install (`raftv-gateway.exe`).** Download `raftv-gateway.exe` from the repository's *Releases* page (built by GitHub from this code: `.github/workflows/gateway-exe.yml`; push a tag such as `gateway-v1.0.0`, or run the workflow by hand and take the file from the run's *Artifacts*). Put it in its own folder and double-click it:
 
 1. Windows may say "Windows protected your PC" (the program is not code-signed): *More info*, *Run anyway*.

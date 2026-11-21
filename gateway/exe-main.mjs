@@ -97,6 +97,7 @@ export function main() {
     if (!stable) console.log('Note: this token changes on every start (no PC id found); put a "token" in raftv-gateway.json to keep one.');
     console.log(file ? `Settings file:   ${file} (read only)` : `Settings file:   none; defaults in use (optional: ${path.join(dir, CONFIG_NAME)})`);
     console.log('Nothing is written to disk.');
+    console.log('mpv: to play in mpv instead of the browser, run once: raftv-gateway.exe --mpv-register (README, "Play in mpv").');
     console.log('Stop: close this window or press Ctrl+C.');
   });
   return server;

@@ -58,6 +58,7 @@ test('packaged gateway: writes nothing to disk; the token is derived (same after
   assert.deepEqual(fs.readdirSync(dir), [], 'no file created');
   assert.match(a.token, /^[A-Za-z0-9_-]{16}$/);
   assert.match(a.out, /Allowed site\(s\): https:\/\/raftv\.pages\.dev/);
+  assert.match(a.out, /mpv: .*--mpv-register/, 'the window points to the mpv setup');
   const b = await start(dir, { HOST: '127.0.0.1', PORT: '0' });
   b.child.kill();
   assert.equal(b.token, a.token, 'same token after a restart (the phone keeps working), with nothing stored');
