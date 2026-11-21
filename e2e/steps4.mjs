@@ -296,7 +296,7 @@ export async function steps4(ctx) {
     } finally { app.sources.hexion = false; await page.close(); }
   });
 
-  await step('mavonyx: signed MovieBox lookup straight from the browser (preflights; apig hides its token header, the web token is used), real file listed through the gateway with the movie-page Referer, MP4 plays, placeholder dropped, DASH ranked unplayable, Test connection row', async () => {
+  await step('mavonyx: signed MovieBox lookup straight from the browser (preflights; apig hides its token header, the web token is used), real file listed through the gateway with the movie-page Referer, MP4 plays through the gateway with that Referer, placeholder dropped, DASH ranked unplayable, Test connection row', async () => {
     const page = await b.newPage({ width: 1280, height: 800, label: 'mavonyx' });
     const seen = mockMavonyxApi(page, { mp4Url: bdix.base + '/media/test.mp4' });
     const prev = page.__intercept;
@@ -311,6 +311,15 @@ export async function steps4(ctx) {
         seen.push(`GATEWAY h5 play ${ok ? 'referer-ok' : 'referer-missing'} ${r.headers()['content-type']}`);
         return r.respond({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': r.headers().origin || '*' }, body: JSON.stringify({ code: 0, data: { streams: ok ? [{ id: 'w1', url: bdix.base + '/media/test.mp4', format: 'MP4', resolutions: '1080', codecName: 'h264' }] : [], hasResource: ok } }) }), true;
       }
+      // video through the gateway: the stream's MovieBox Referer travels in `h`; the harness then serves the local file
+      // (the real gateway forwards Range and those headers to the video host: test/gateway-exe.test.mjs, gateway tests)
+      if (r.method() === 'GET' && u.pathname === '/s' && u.searchParams.get('u') === bdix.base + '/media/test.mp4') {
+        let h = {};
+        try { h = JSON.parse(Buffer.from(u.searchParams.get('h') || '', 'base64url').toString()); } catch { h = {}; }
+        const ok = /^https:\/\/movie-box\.co\/movies\/the-matrix-x1\?id=603&/.test(h.Referer || '') || /^https:\/\/h5-api\.aoneroom\.com\/movies\/the-matrix-x1\?id=603&/.test(h.Referer || '');
+        if (!seen.includes('GATEWAY /s ' + (ok ? 'referer-ok' : 'referer-missing'))) seen.push('GATEWAY /s ' + (ok ? 'referer-ok' : 'referer-missing'));
+        return r.continue({ url: bdix.base + '/media/test.mp4' }), true;
+      }
       seen.push('GATEWAY other ' + u.pathname); r.abort(); return true;
     };
     try {
@@ -322,7 +331,10 @@ export async function steps4(ctx) {
       await page.evaluate(() => { location.hash = '#/watch/movie/603'; });
       await waitPlaying(page, 1.0);
       const v = await video(page, (v) => ({ src: v.currentSrc, w: v.videoWidth, audio: v.webkitAudioDecodedByteCount }));
-      assert.equal(v.src, bdix.base + '/media/test.mp4', 'the web API’s MP4, played straight from its host');
+      const vs = new URL(v.src);
+      assert.equal(vs.origin + vs.pathname, 'http://127.0.0.1:8787/s', 'the video plays through the gateway (it needs a MovieBox Referer)');
+      assert.equal(vs.searchParams.get('u'), bdix.base + '/media/test.mp4');
+      assert.ok(seen.includes('GATEWAY /s referer-ok'), 'the gateway gets the movie-page Referer for the video: ' + seen.join(' | '));
       assert.equal(v.w, 640); assert.ok(v.audio > 0, 'sound is decoded');
       assert.ok(!seen.some((x) => /BAD-SIGNATURE/.test(x)), 'Chromium sent every signed request unchanged: ' + seen.join(' | '));
       assert.ok(seen.includes('POST /wefeed-mobile-bff/subject-api/search/v2 signed auth ua:browser'), 'search signed and authorised');
